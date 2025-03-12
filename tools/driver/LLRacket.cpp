@@ -31,6 +31,7 @@ int main(int argc_, const char **argv_) {
   // Source manager class to manage source buffers
   llvm::SourceMgr *SrcMgr = new llvm::SourceMgr();
   DiagnosticsEngine Diags(*SrcMgr);
+
   LLRacket Compiler(SrcMgr, Diags);
   Compiler.getSourceMgr()->AddNewSourceBuffer(std::move(*FileOrErr),
                                               llvm::SMLoc());
@@ -41,7 +42,7 @@ int main(int argc_, const char **argv_) {
 int LLRacket::exec() {
   // Parse the program to AST
   Lexer Lex(*SrcMgr, Diags);
-  Parser P(Lex);
+  Parser P(Lex, Diags);
   AST *Tree = P.parse();
   if (!Tree || Diags.numErrors()) {
     llvm::errs() << "Syntax error\n";

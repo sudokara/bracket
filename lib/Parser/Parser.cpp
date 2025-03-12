@@ -15,18 +15,25 @@ AST *Parser::parse() {
 }
 
 Expr *Parser::parseExpr() {
+  auto ErrorHandler = [this]() {
+    Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText());
+    skipUntil(tok::r_paren);
+    return nullptr;
+  };
+
   if (Tok.is(TokenKind::integer_literal)) {
     Int *Ret = new Int(Tok.getText());
     advance();
     return Ret;
   }
+
   if (!consume(TokenKind::l_paren))
-    goto _error;
+    return ErrorHandler();
 
   if (Tok.is(TokenKind::read)) {
     advance();
     if (!consume(TokenKind::r_paren))
-      goto _error;
+      return ErrorHandler();
     return new Prim(TokenKind::read);
   }
 
@@ -35,7 +42,7 @@ Expr *Parser::parseExpr() {
     Expr *E1 = parseExpr();
     Expr *E2 = parseExpr();
     if (!consume(TokenKind::r_paren))
-      goto _error;
+      return ErrorHandler();
     return new Prim(TokenKind::plus, E1, E2);
   }
   if (Tok.is(TokenKind::minus)) {
@@ -49,12 +56,8 @@ Expr *Parser::parseExpr() {
 
     Expr *E2 = parseExpr();
     if (!consume(TokenKind::r_paren))
-      goto _error;
+      return ErrorHandler();
     return new Prim(TokenKind::minus, E1, E2);
   }
-
-_error:
-  while (!Tok.is(TokenKind::eof))
-    advance();
-  return nullptr;
+  return ErrorHandler();
 }
