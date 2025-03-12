@@ -20,7 +20,7 @@ class Lexer {
   // Might want it for future use
   // KeywordFilter kwFilter;
 
-  DiagnosticsEngine &Diags;
+  DiagnosticsEngine Diags;
 
 public:
   Lexer(llvm::SourceMgr &SrcMgr, DiagnosticsEngine &Diags)

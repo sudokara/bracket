@@ -22,7 +22,7 @@ class LLRacket {
   DiagnosticsEngine Diags;
 
 public:
-  LLRacket(SourceMgr *SrcMgr, DiagnosticsEngine Diags)
+  LLRacket(SourceMgr *SrcMgr, DiagnosticsEngine &Diags)
       : SrcMgr(SrcMgr), Diags(Diags) {
     moduleInit();
   };

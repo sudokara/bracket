@@ -2,28 +2,36 @@
 #define LLRACKET_PARSER_PARSER_H
 
 #include "llracket/AST/AST.h"
+#include "llracket/Basic/Diagnostic.h"
 #include "llracket/Lexer/Lexer.h"
 #include "llvm/Support/raw_ostream.h"
+#include <vector>
 
 class Parser {
   Lexer &Lex;
   Token Tok;
-  bool HasError;
+  DiagnosticsEngine &Diags;
 
-  void error() {
-    llvm::errs() << "Error: unexpected token: " << Tok.getText() << '\n';
-    HasError = true;
+  // {Received Token, Expected Token}
+  std::vector<std::pair<TokenKind, TokenKind>> UnexpectedTokens;
+
+  void error(TokenKind Kind) {
+    UnexpectedTokens.push_back({Tok.getKind(), Kind});
   }
 
   void advance() { Lex.next(Tok); }
   void advance(unsigned N) {
-    for (unsigned I = 0; I < N; I++)
+    for (unsigned I = 0; I < N; I++) {
+      if (Tok.getKind() == tok::eof) {
+        break;
+      }
       advance();
+    }
   }
 
   bool expect(TokenKind Kind) {
     if (Tok.getKind() != Kind) {
-      error();
+      error(Kind);
       return false;
     }
     return true;
@@ -39,10 +47,20 @@ class Parser {
   Expr *parseExpr();
 
 public:
-  Parser(Lexer &Lex) : Lex(Lex), HasError(false) { advance(); }
-
-  bool hasError() { return HasError; }
+  Parser(Lexer &Lex, DiagnosticsEngine &Diags) : Lex(Lex), Diags(Diags) {
+    advance();
+  }
 
   AST *parse();
+
+  template <class... Tokens> void skipUntil(Tokens... Toks) {
+    std::unordered_set<tok::TokenKind> Skipset = {tok::eof, Toks...};
+    while (true) {
+      if (Skipset.count(Tok.getKind())) {
+        break;
+      }
+      advance();
+    }
+  }
 };
 #endif

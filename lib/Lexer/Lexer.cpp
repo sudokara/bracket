@@ -64,6 +64,7 @@ void Lexer::next(Token &token) {
 #undef CASE
 
   default:
+    Diags.report(getLoc(), diag::err_unknown_token, *BufferPtr);
     formToken(token, BufferPtr + 1, TokenKind::unknown);
     break;
   }
