@@ -12,10 +12,10 @@ using namespace llracket;
 
 class Lexer {
   unsigned CurrBuffer = 0;
-  StringRef Buffer;
-  const char *BufferPtr;
+  StringRef Buffer; // input buffer
+  const char *BufferPtr; // current location in buffer
 
-  llvm::SourceMgr &SrcMgr;
+  llvm::SourceMgr &SrcMgr; // converts source files to buffer and gives to lexer
 
   // Might want it for future use
   // KeywordFilter kwFilter;
@@ -32,7 +32,7 @@ public:
 
   DiagnosticsEngine &getDiagnostics() { return Diags; }
 
-  void next(Token &Tok);
+  void next(Token &Tok); // lexing actually happens here
 
   // Might be useful
   Token peek(unsigned N = 0);

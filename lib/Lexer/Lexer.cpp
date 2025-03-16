@@ -22,6 +22,7 @@ LLVM_READNONE inline static bool isAlphanumeric_(char c) {
 } // namespace charinfo
 
 void Lexer::next(Token &token) {
+  // parses one token at a time
   while (*BufferPtr && charinfo::isWhitespace(*BufferPtr))
     ++BufferPtr;
 
@@ -30,11 +31,11 @@ void Lexer::next(Token &token) {
     return;
   }
 
-  if (charinfo::isDigit(*BufferPtr)) {
+  if (charinfo::isDigit(*BufferPtr)) { // read until all digits
     const char *End = BufferPtr + 1;
     while (charinfo::isDigit(*End))
       ++End;
-    formToken(token, End, TokenKind::integer_literal);
+    formToken(token, End, TokenKind::integer_literal); // construct the integer literal from the string
     return;
   }
   if (charinfo::isLetter(*BufferPtr)) {
@@ -43,11 +44,20 @@ void Lexer::next(Token &token) {
       ++End;
 
     llvm::StringRef Text(BufferPtr, End - BufferPtr);
-    if (Text == "read") {
+    // becomes worse if more keywords, can have a set/map for construction of tokens for keywords
+    if (Text == "read") { // override for keyword read, can do similar for let
       formToken(token, End, TokenKind::read);
       return;
     }
-    formToken(token, End, TokenKind::unknown);
+    if (Text == "let") {
+      // form a let token and return
+      formToken(token, End, TokenKind::kw_LET);
+      return;
+    }
+    // formToken(token, End, TokenKind::unknown);
+    
+    // ! I'm assuming that this token is going to be an identifer. Syntax errors should be caught later.
+    formToken(token, End, TokenKind::identifier);
     return;
   }
 
@@ -64,8 +74,8 @@ void Lexer::next(Token &token) {
 #undef CASE
 
   default:
-    Diags.report(getLoc(), diag::err_unknown_token, *BufferPtr);
-    formToken(token, BufferPtr + 1, TokenKind::unknown);
+    Diags.report(getLoc(), diag::err_unknown_token, *BufferPtr); // return an unknown token error with diag
+    formToken(token, BufferPtr + 1, TokenKind::unknown); // form an unknown token
     break;
   }
   return;
