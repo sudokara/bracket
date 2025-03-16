@@ -19,6 +19,7 @@ class Parser {
     UnexpectedTokens.push_back({Tok.getKind(), Kind});
   }
 
+  // move through the tokens using next of lexer
   void advance() { Lex.next(Tok); }
   void advance(unsigned N) {
     for (unsigned I = 0; I < N; I++) {
@@ -29,6 +30,7 @@ class Parser {
     }
   }
 
+  // check if character is of expected kind, else error
   bool expect(TokenKind Kind) {
     if (Tok.getKind() != Kind) {
       error(Kind);
@@ -37,6 +39,7 @@ class Parser {
     return true;
   }
 
+  // check if character is of expected kind and move forward, else error
   bool consume(TokenKind Kind) {
     if (!expect(Kind))
       return false;

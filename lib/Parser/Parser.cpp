@@ -9,7 +9,7 @@ using tok::TokenKind;
 
 AST *Parser::parse() {
   Program *P = new Program(parseExpr());
-  AST *Res = llvm::dyn_cast<AST>(P);
+  AST *Res = llvm::dyn_cast<AST>(P); // program is a subclass of AST so we can do this
   expect(TokenKind::eof);
   return Res;
 }
@@ -21,6 +21,13 @@ Expr *Parser::parseExpr() {
     return nullptr;
   };
 
+  // variable
+  if (Tok.is(TokenKind::identifier)) {
+    Var *VarExpr = new Var(Tok.getText());
+    advance();
+    return VarExpr;
+  }
+
   if (Tok.is(TokenKind::integer_literal)) {
     Int *Ret = new Int(Tok.getText());
     advance();
@@ -29,6 +36,32 @@ Expr *Parser::parseExpr() {
 
   if (!consume(TokenKind::l_paren))
     return ErrorHandler();
+
+  // let expression
+  if (Tok.is(TokenKind::kw_LET)) {
+    advance();
+
+    if (!Tok.is(TokenKind::identifier)) {
+      Diags.report(Tok.getLocation(), diag::err_expected_identifier, Tok.getText());
+      return ErrorHandler();
+    }
+
+    StringRef VarName = Tok.getText();
+    advance();
+
+    Expr *Binding = parseExpr();
+    if (!Binding)
+      return ErrorHandler();
+
+    Expr *Body = parseExpr();
+    if (!Body)
+      return ErrorHandler();
+
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler();
+
+    return new Let(VarName, Binding, Body);
+  }
 
   if (Tok.is(TokenKind::read)) {
     advance();
@@ -43,21 +76,21 @@ Expr *Parser::parseExpr() {
     Expr *E2 = parseExpr();
     if (!consume(TokenKind::r_paren))
       return ErrorHandler();
-    return new Prim(TokenKind::plus, E1, E2);
+    return new Prim(TokenKind::plus, E1, E2); // addition
   }
-  if (Tok.is(TokenKind::minus)) {
+  if (Tok.is(TokenKind::minus)) { // negation or subtraction
     advance();
 
     Expr *E1 = parseExpr();
 
     if (Tok.is(TokenKind::r_paren)) {
-      return new Prim(TokenKind::minus, E1);
+      return new Prim(TokenKind::minus, E1); // negation
     }
 
     Expr *E2 = parseExpr();
     if (!consume(TokenKind::r_paren))
       return ErrorHandler();
-    return new Prim(TokenKind::minus, E1, E2);
+    return new Prim(TokenKind::minus, E1, E2); // subtraction
   }
   return ErrorHandler();
 }
