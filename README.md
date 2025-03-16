@@ -35,6 +35,16 @@ Before running the project, ensure you have installed CMake, Ninja, and Python f
    ```
    You may need to create a `build` directory in the root of the repository before running this command.
 
+   I got the project to build by using the following command:
+   ```sh
+   cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_C_COMPILER=/media/gp/IIITH-DATA/YEAR_4/Sem-2/Compilers/llvm-project/build/bin/clang \
+      -DCMAKE_CXX_COMPILER=/media/gp/IIITH-DATA/YEAR_4/Sem-2/Compilers/llvm-project/build/bin/clang++ \
+      -DLLVM_DIR=/media/gp/IIITH-DATA/YEAR_4/Sem-2/Compilers/llvm-project/build/lib/cmake/llvm \
+      -DCMAKE_CXX_FLAGS="-fno-rtti" \
+      -S . -B build
+   ```
+
 2. **Build the Project**:
    ```sh
    cmake --build ./build

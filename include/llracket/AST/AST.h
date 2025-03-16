@@ -22,8 +22,8 @@ public:
   virtual void visit(Expr &) {};
   virtual void visit(Prim &) {};
   virtual void visit(Int &) = 0;
-  virtual void visit(Var) {};
-  virtual void visit(Let) {};
+  virtual void visit(Var &) {};
+  virtual void visit(Let &) {};
 };
 
 class AST {
@@ -117,6 +117,6 @@ class Let: public Expr {
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
   static bool classof(const Expr *E) { return E->getKind() == ExprLet; }
-}
+};
 
 #endif
