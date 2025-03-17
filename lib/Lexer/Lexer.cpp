@@ -71,6 +71,8 @@ void Lexer::next(Token &token) {
     CASE('-', minus);
     CASE('(', l_paren);
     CASE(')', r_paren);
+    CASE('[', l_square);
+    CASE(']', r_square);
 #undef CASE
 
   default:

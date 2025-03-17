@@ -37,10 +37,22 @@ Expr *Parser::parseExpr() {
   if (!consume(TokenKind::l_paren))
     return ErrorHandler();
 
+  // we have seen a left parenthesis so far for all 
+  // tokens below this point
+
   // let expression
   if (Tok.is(TokenKind::kw_LET)) {
     advance();
 
+    // check for the second opening parenthesis in (let (
+    if (!consume(TokenKind::l_paren))
+      return ErrorHandler();
+
+    // check for the opening square bracket in (let ([
+    if (!consume(TokenKind::l_square))
+      return ErrorHandler();
+
+    // read the variable name in (let ([ varname
     if (!Tok.is(TokenKind::identifier)) {
       Diags.report(Tok.getLocation(), diag::err_expected_identifier, Tok.getText());
       return ErrorHandler();
@@ -49,14 +61,27 @@ Expr *Parser::parseExpr() {
     StringRef VarName = Tok.getText();
     advance();
 
+    // (let ([ varname bindingexpr
+    // read the expression which will evaluate
+    // tp the value to be stored in the variable
     Expr *Binding = parseExpr();
     if (!Binding)
       return ErrorHandler();
 
+    // (let ([ varname bindingexpr bodyexpr
+    // read the body expression
+    // where the variable is in scope
     Expr *Body = parseExpr();
     if (!Body)
       return ErrorHandler();
 
+    // (let ([ varname bindingexpr bodyexpr ]
+    // check for the closing square bracket
+    if (!consume(TokenKind::r_square))
+      return ErrorHandler();
+
+    // (let ([ varname bindingexpr bodyexpr ])
+    // check for the closing parenthesis
     if (!consume(TokenKind::r_paren))
       return ErrorHandler();
 
