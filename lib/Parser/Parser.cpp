@@ -15,8 +15,8 @@ AST *Parser::parse() {
 }
 
 Expr *Parser::parseExpr() {
-  auto ErrorHandler = [this]() {
-    Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText());
+  auto ErrorHandler = [this](int error=diag::err_unexpected_token) {
+    Diags.report(Tok.getLocation(), error, Tok.getText());
     skipUntil(tok::r_paren);
     return nullptr;
   };
@@ -35,7 +35,7 @@ Expr *Parser::parseExpr() {
   }
 
   if (!consume(TokenKind::l_paren))
-    return ErrorHandler();
+    return ErrorHandler(diag::err_no_lparen);
 
   // we have seen a left parenthesis so far for all 
   // tokens below this point
@@ -46,11 +46,11 @@ Expr *Parser::parseExpr() {
 
     // check for the second opening parenthesis in (let (
     if (!consume(TokenKind::l_paren))
-      return ErrorHandler();
+      return ErrorHandler(diag::err_no_lparen);
 
     // check for the opening square bracket in (let ([
     if (!consume(TokenKind::l_square))
-      return ErrorHandler();
+      return ErrorHandler(diag::err_no_lsquare);
 
     // read the variable name in (let ([ varname
     if (!Tok.is(TokenKind::identifier)) {
@@ -71,10 +71,10 @@ Expr *Parser::parseExpr() {
       // (let ([ varname bindingexpr ]
     // check for the closing square bracket
     if (!consume(TokenKind::r_square))
-      return ErrorHandler();
+      return ErrorHandler(diag::err_no_rsquare);
 
-      if (!consume(TokenKind::r_paren))
-      return ErrorHandler();
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
 
     // (let ([ varname bindingexpr ]) bodyexpr
     // read the body expression
@@ -86,7 +86,7 @@ Expr *Parser::parseExpr() {
     // (let ([ varname bindingexpr ]) bodyexpr)
     // check for the closing parenthesis
     if (!consume(TokenKind::r_paren))
-      return ErrorHandler();
+      return ErrorHandler(diag::err_no_rparen);
 
     return new Let(VarName, Binding, Body);
   }
@@ -94,7 +94,7 @@ Expr *Parser::parseExpr() {
   if (Tok.is(TokenKind::read)) {
     advance();
     if (!consume(TokenKind::r_paren))
-      return ErrorHandler();
+      return ErrorHandler(diag::err_no_rparen);
     return new Prim(TokenKind::read);
   }
 
@@ -103,7 +103,7 @@ Expr *Parser::parseExpr() {
     Expr *E1 = parseExpr();
     Expr *E2 = parseExpr();
     if (!consume(TokenKind::r_paren))
-      return ErrorHandler();
+      return ErrorHandler(diag::err_no_rparen);
     return new Prim(TokenKind::plus, E1, E2); // addition
   }
   if (Tok.is(TokenKind::minus)) { // negation or subtraction
@@ -118,7 +118,7 @@ Expr *Parser::parseExpr() {
 
     Expr *E2 = parseExpr();
     if (!consume(TokenKind::r_paren))
-      return ErrorHandler();
+      return ErrorHandler(diag::err_no_rparen);
     return new Prim(TokenKind::minus, E1, E2); // subtraction
   }
   return ErrorHandler();

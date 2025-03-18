@@ -8,4 +8,9 @@ DIAG(err_unknown_token, Error, "Unknown token")
 DIAG(err_unexpected_token, Error, "Unexpected token")
 DIAG(err_expected_identifier, Error, "Expected identifier")
 
+DIAG(err_no_lparen, Error, "Missing opening parenthesis (")
+DIAG(err_no_rparen, Error, "Missing closing parenthesis )")
+
+DIAG(err_no_lsquare, Error, "Missing opening square bracket [")
+DIAG(err_no_rsquare, Error, "Missing closing square bracket ]")
 #undef DIAG
