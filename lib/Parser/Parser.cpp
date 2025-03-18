@@ -68,19 +68,22 @@ Expr *Parser::parseExpr() {
     if (!Binding)
       return ErrorHandler();
 
-    // (let ([ varname bindingexpr bodyexpr
+      // (let ([ varname bindingexpr ]
+    // check for the closing square bracket
+    if (!consume(TokenKind::r_square))
+      return ErrorHandler();
+
+      if (!consume(TokenKind::r_paren))
+      return ErrorHandler();
+
+    // (let ([ varname bindingexpr ]) bodyexpr
     // read the body expression
     // where the variable is in scope
     Expr *Body = parseExpr();
     if (!Body)
       return ErrorHandler();
 
-    // (let ([ varname bindingexpr bodyexpr ]
-    // check for the closing square bracket
-    if (!consume(TokenKind::r_square))
-      return ErrorHandler();
-
-    // (let ([ varname bindingexpr bodyexpr ])
+    // (let ([ varname bindingexpr ]) bodyexpr)
     // check for the closing parenthesis
     if (!consume(TokenKind::r_paren))
       return ErrorHandler();
