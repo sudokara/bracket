@@ -11,6 +11,8 @@ parser.add_argument("--runtime", required=True,
                     help="Path to the runtime.c file.")
 parser.add_argument("--build-dir", required=True,
                     help="Path to the build directory.")
+parser.add_argument("--llvm-bin-dir", required=False,
+                    help="Path to the LLVM binaries directory.")
 args = parser.parse_args()
 
 
@@ -44,8 +46,12 @@ def run_test(test_program, test_input, test_output, expect_error, build_dir, qui
         return False
 
     # Step 2: Run llc to generate the .s file
+    llc_cmd = "llc"
+    if args.llvm_bin_dir:
+        llc_cmd = os.path.join(args.llvm_bin_dir, "llc")
+    
     result = subprocess.run(
-        ["llc", "-relocation-model=pic", "-o", s_file, ll_file],
+        [llc_cmd, "-relocation-model=pic", "-o", s_file, ll_file],
         capture_output=True,
         text=True,
     )
@@ -55,8 +61,12 @@ def run_test(test_program, test_input, test_output, expect_error, build_dir, qui
         return False
 
     # Step 3: Run clang to generate the executable
+    clang_cmd = "clang"
+    if args.llvm_bin_dir:
+        clang_cmd = os.path.join(args.llvm_bin_dir, "clang")
+        
     result = subprocess.run(
-        ["clang", "-o", executable, s_file, args.runtime],
+        [clang_cmd, "-o", executable, s_file, args.runtime],
         capture_output=True,
         text=True,
     )

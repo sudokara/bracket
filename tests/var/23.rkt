@@ -1,0 +1,5 @@
+(let ([x (read)])
+  (let ([y (read)])
+    (let ([z (+ x y)])
+      (let ([x z])
+        (+ x (- z))))))

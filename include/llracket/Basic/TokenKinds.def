@@ -11,15 +11,18 @@
 TOK(unknown)
 TOK(eof)
 TOK(integer_literal)
+TOK(identifier)
 
 PUNCTUATOR(l_paren, "(")
 PUNCTUATOR(r_paren, ")")
+PUNCTUATOR(l_square, "[")
+PUNCTUATOR(r_square, "]")
 PUNCTUATOR(plus, "+")
 PUNCTUATOR(minus, "-")
 PUNCTUATOR(read, "read")
 
 // Keywords with feature flags
-// KEYWORD(LET, KEYALL)
+KEYWORD(LET, KEYALL)
 
 #undef KEYWORD
 #undef PUNCTUATOR
