@@ -31,6 +31,23 @@ void Lexer::next(Token &token) {
     return;
   }
 
+  if (*BufferPtr == '#') {
+    if (*(BufferPtr + 1) && *(BufferPtr + 1) == 't') {
+      formToken(token, BufferPtr + 2, TokenKind::boolean_literal);
+    }
+    else if (*(BufferPtr + 1) && *(BufferPtr + 1) == 'f') {
+      formToken(token, BufferPtr + 2, TokenKind::boolean_literal);
+    }
+    else {
+      Diags.report(getLoc(), diag::err_unknown_token, *BufferPtr); // return an unknown token error with diag
+      if (*(BufferPtr + 1))
+        formToken(token, BufferPtr + 2, TokenKind::unknown); // form an unknown token
+      else
+        formToken(token, BufferPtr + 1, TokenKind::unknown); // form an unknown token
+    }
+    return;
+  }
+
   if (charinfo::isDigit(*BufferPtr)) { // read until all digits
     const char *End = BufferPtr + 1;
     while (charinfo::isDigit(*End))
@@ -44,7 +61,13 @@ void Lexer::next(Token &token) {
       ++End;
 
     llvm::StringRef Text(BufferPtr, End - BufferPtr);
-    // becomes worse if more keywords, can have a set/map for construction of tokens for keywords
+    // TODO: becomes worse if more keywords, can have a map for construction of tokens for keywords
+    // StringMap <int> keywords_map;
+
+    if (Text == "if") {
+      formToken(token, End, TokenKind::kw_IF);
+      return;
+    }
     if (Text == "read") { // override for keyword read, can do similar for let
       formToken(token, End, TokenKind::read);
       return;
@@ -52,6 +75,22 @@ void Lexer::next(Token &token) {
     if (Text == "let") {
       // form a let token and return
       formToken(token, End, TokenKind::kw_LET);
+      return;
+    }
+    if (Text == "and") {
+      formToken(token, End, TokenKind::logical_and);
+      return;
+    }
+    if (Text == "or") {
+      formToken(token, End, TokenKind::logical_or);
+      return;
+    }
+    if (Text == "not") {
+      formToken(token, End, TokenKind::logical_not);
+      return;
+    }
+    if (Text == "eq?") {
+      formToken(token, End, TokenKind::eq);
       return;
     }
     // formToken(token, End, TokenKind::unknown);
@@ -74,6 +113,22 @@ void Lexer::next(Token &token) {
     CASE('[', l_square);
     CASE(']', r_square);
 #undef CASE
+
+  case '<':
+    if (*(BufferPtr + 1) && *(BufferPtr + 1) == '=') {
+      formToken(token, BufferPtr + 2, TokenKind::le);
+    } else {
+      formToken(token, BufferPtr + 1, TokenKind::lt);
+    }
+    break;
+
+  case '>':
+    if (*(BufferPtr + 1) && *(BufferPtr + 1) == '=') {
+      formToken(token, BufferPtr + 2, TokenKind::ge);
+    } else {
+      formToken(token, BufferPtr + 1, TokenKind::gt);
+    }
+    break;
 
   default:
     Diags.report(getLoc(), diag::err_unknown_token, *BufferPtr); // return an unknown token error with diag
