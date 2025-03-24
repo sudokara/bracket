@@ -61,36 +61,18 @@ void Lexer::next(Token &token) {
       ++End;
 
     llvm::StringRef Text(BufferPtr, End - BufferPtr);
-    // TODO: becomes worse if more keywords, can have a map for construction of tokens for keywords
-    // StringMap <int> keywords_map;
+    StringMap <TokenKind> text_map({
+      {"if", TokenKind::kw_IF},
+      {"read", TokenKind::read},
+      {"let", TokenKind::kw_LET},
+      {"and", TokenKind::logical_and},
+      {"or", TokenKind::logical_or},
+      {"not", TokenKind::logical_not},
+      {"eq?", TokenKind::eq}
+    });
 
-    if (Text == "if") {
-      formToken(token, End, TokenKind::kw_IF);
-      return;
-    }
-    if (Text == "read") { // override for keyword read, can do similar for let
-      formToken(token, End, TokenKind::read);
-      return;
-    }
-    if (Text == "let") {
-      // form a let token and return
-      formToken(token, End, TokenKind::kw_LET);
-      return;
-    }
-    if (Text == "and") {
-      formToken(token, End, TokenKind::logical_and);
-      return;
-    }
-    if (Text == "or") {
-      formToken(token, End, TokenKind::logical_or);
-      return;
-    }
-    if (Text == "not") {
-      formToken(token, End, TokenKind::logical_not);
-      return;
-    }
-    if (Text == "eq?") {
-      formToken(token, End, TokenKind::eq);
+    if (text_map.find(Text) != text_map.end()) {
+      formToken(token, End, text_map[Text]);
       return;
     }
     // formToken(token, End, TokenKind::unknown);
