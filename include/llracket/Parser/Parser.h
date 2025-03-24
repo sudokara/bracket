@@ -5,6 +5,7 @@
 #include "llracket/Basic/Diagnostic.h"
 #include "llracket/Lexer/Lexer.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/SmallVector.h"
 #include <vector>
 
 class Parser {
