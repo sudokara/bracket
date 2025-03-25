@@ -196,11 +196,11 @@ public:
     Value *varPtr = nameMap[varName];
     Type *varType = varPtr->getType();
 
-    if (varType->isIntegerTy(32)) {
-      V = Builder.CreateLoad(Int32Ty, varPtr, varName + "_val");
-    }
-    else if (varType->isIntegerTy(1)) {
+    if (varType->isIntegerTy(1)) {
       V = Builder.CreateLoad(BoolTy, varPtr, varName + "_val");
+    }
+    else {
+      V = Builder.CreateLoad(Int32Ty, varPtr, varName + "_val");
     }
   };
 
@@ -220,12 +220,12 @@ public:
     }
 
     // assign this variable through an alloca
-    AllocaInst *variableAlloc = Builder.CreateAlloca(bindingType, nullptr, varName);
-    if (bindingType->isIntegerTy(32)) {
-      AllocaInst *variableAlloc = Builder.CreateAlloca(Int32Ty, nullptr, varName);
+    AllocaInst *variableAlloc = nullptr;
+    if (bindingType->isIntegerTy(1)) {
+      variableAlloc = Builder.CreateAlloca(BoolTy, nullptr, varName);
     }
-    else if (bindingType->isIntegerTy(1)) {
-      AllocaInst *variableAlloc = Builder.CreateAlloca(BoolTy, nullptr, varName);
+    else {
+      variableAlloc = Builder.CreateAlloca(Int32Ty, nullptr, varName);
     }
     Builder.CreateStore(bindingVal, variableAlloc);
     nameMap[varName] = variableAlloc;
@@ -251,6 +251,9 @@ public:
     // conditional break
     Node.getCondition()->accept(*this);
     Value *Cond = V;
+    if (Cond->getType() != BoolTy) {
+      Cond = Builder.CreateICmpNE(Cond, ConstantInt::get(Cond->getType(), 0), "ifcond");
+    }
     Builder.CreateCondBr(Cond, ThenBB, ElseBB);
 
     // then block
@@ -258,6 +261,7 @@ public:
     Node.getThenExpr()->accept(*this);
     Value *ThenV = V;
     Type *ThenTy = ThenV->getType();
+    bool isInt = ThenTy->isIntegerTy(32);
     Builder.CreateBr(MergeBB);
 
     ThenBB = Builder.GetInsertBlock(); // for phi node
@@ -272,7 +276,13 @@ public:
 
     // merge with phi
     Builder.SetInsertPoint(MergeBB);
-    PHINode *PN = Builder.CreatePHI(ThenTy, 2, "iftmp");
+
+    PHINode *PN = nullptr;
+    if (isInt)
+      PN = Builder.CreatePHI(Int32Ty, 2, "iftmp");
+    else
+      PN = Builder.CreatePHI(BoolTy, 2, "iftmp");
+
     PN->addIncoming(ThenV, ThenBB);
     PN->addIncoming(ElseV, ElseBB);
     V = PN;
