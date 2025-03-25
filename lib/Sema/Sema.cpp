@@ -25,19 +25,17 @@ public:
   }
 
   void raiseTypeError(const Expr *Node, ExprTypes Expected, ExprTypes Found) {
-    llvm::errs() << "Error: Expected " ;
-    printType(Expected);
-    llvm::errs() << " but found ";
-    printType(Found);
-    llvm::errs() << " in expression\n";
+    llvm::errs()  << "Error: Expected " << getTypeString(Expected)
+                  << " but found " << getTypeString(Found)
+                  << " in expression\n";
     HasError = true;
   }
 
-  void printType(ExprTypes T) {
+  std::string getTypeString(ExprTypes T) {
     switch (T) {
-      case ExprTypes::Integer: llvm::errs() << "Integer"; break;
-      case ExprTypes::Bool: llvm::errs() << "Boolean"; break;
-      default: llvm::errs() << "Unknown"; break;
+      case ExprTypes::Integer: return "Integer";
+      case ExprTypes::Bool: return "Boolean";
+      default: return "Unknown";
     }
   }
 
@@ -78,21 +76,130 @@ public:
   }
 
   virtual void visit(Prim &Node) override {
-    auto &PrimNode = llvm::cast<Prim>(Node);
-    if (PrimNode.getOp() == tok::read) {
+    auto Op = Node.getOp();
+
+    if (Op == tok::read) {
+      setExprType(&Node, ExprTypes::Integer);
       return;
     }
-    if (PrimNode.getOp() == tok::minus) {
-      if (PrimNode.getE1() and !PrimNode.getE2()) {
-        PrimNode.getE1()->accept(*this);
+
+    if (Op == tok::minus) {
+      if (Node.getE1() and !Node.getE2()) {
+        Node.getE1()->accept(*this);
+        ExprTypes E1Type = getExprType(Node.getE1());
+
+        if (E1Type != ExprTypes::Integer) {
+          raiseTypeError(&Node, ExprTypes::Integer, E1Type);
+          setExprType(&Node, ExprTypes::Unknown);
+        }
+
+        else {
+          setExprType(&Node, ExprTypes::Integer);
+        }
+
         return;
       }
     }
-    if (PrimNode.getOp() == tok::plus || PrimNode.getOp() == tok::minus) {
-      PrimNode.getE1()->accept(*this);
-      PrimNode.getE2()->accept(*this);
+
+    if (Op == tok::plus || (Op == tok::minus && Node.getE2())) {
+      Node.getE1()->accept(*this);
+      Node.getE2()->accept(*this);
+
+      ExprTypes E1Type = getExprType(Node.getE1()), E2Type = getExprType(Node.getE2());
+
+      if (E1Type != ExprTypes::Integer) {
+        raiseTypeError(&Node, ExprTypes::Integer, E1Type);
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
+      if (E2Type != ExprTypes::Integer) {
+        raiseTypeError(&Node, ExprTypes::Integer, E2Type);
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
+      setExprType(&Node, ExprTypes::Integer);
       return;
     }
+
+    if (Op == tok::le || Op == tok::lt || Op == tok::ge || Op == tok::gt) {
+      Node.getE1()->accept(*this);
+      Node.getE2()->accept(*this);
+
+      ExprTypes E1Type = getExprType(Node.getE1()), E2Type = getExprType(Node.getE2());
+
+      if (E1Type != ExprTypes::Integer) {
+        raiseTypeError(&Node, ExprTypes::Integer, E1Type);
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
+      if (E2Type != ExprTypes::Integer) {
+        raiseTypeError(&Node, ExprTypes::Integer, E2Type);
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
+      setExprType(&Node, ExprTypes::Bool);
+      return;
+    }
+
+    if (Op == tok::eq) {
+      Node.getE1()->accept(*this);
+      Node.getE2()->accept(*this);
+
+      ExprTypes E1Type = getExprType(Node.getE1()), E2Type = getExprType(Node.getE2());
+
+      if (E1Type != E2Type) {
+        raiseTypeError(&Node, E1Type, E2Type);
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
+      setExprType(&Node, ExprTypes::Bool);
+      return;
+    }
+
+    if (Op == tok::logical_or || Op == tok::logical_and) {
+      Node.getE1()->accept(*this);
+      Node.getE2()->accept(*this);
+
+      ExprTypes E1Type = getExprType(Node.getE1()), E2Type = getExprType(Node.getE2());
+
+      if (E1Type != ExprTypes::Bool) {
+        raiseTypeError(&Node, ExprTypes::Bool, E1Type);
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
+      if (E2Type != ExprTypes::Bool) {
+        raiseTypeError(&Node, ExprTypes::Bool, E2Type);
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
+      setExprType(&Node, ExprTypes::Bool);
+      return;
+    }
+
+    if (Op == tok::logical_not) {
+      Node.getE1()->accept(*this);
+
+      ExprTypes E1Type = getExprType(Node.getE1());
+
+      if (E1Type != ExprTypes::Bool) {
+        raiseTypeError(&Node, ExprTypes::Bool, E1Type);
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
+      setExprType(&Node, ExprTypes::Bool);
+      return;
+    }
+
+    setExprType(&Node, ExprTypes::Unknown);
+    HasError = true;
   }
 
   virtual void visit(Int &Node) override {
