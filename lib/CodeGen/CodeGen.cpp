@@ -194,7 +194,14 @@ public:
     }
 
     Value *varPtr = nameMap[varName];
-    V = Builder.CreateLoad(Int32Ty, varPtr, varName + "_val");
+    Type *varType = varPtr->getType();
+
+    if (varType->isIntegerTy(32)) {
+      V = Builder.CreateLoad(Int32Ty, varPtr, varName + "_val");
+    }
+    else if (varType->isIntegerTy(1)) {
+      V = Builder.CreateLoad(BoolTy, varPtr, varName + "_val");
+    }
   };
 
   virtual void visit(Let &Node) override {
@@ -204,6 +211,7 @@ public:
     // so that the variable can be assigned the value
     Node.getBinding()->accept(*this);
     Value *bindingVal = V; // stored in V from the visit of the expression
+    Type *bindingType = bindingVal->getType();
 
     // checking if a binding exists and we have to backup for shadowing
     Value *oldBinding = nullptr;
@@ -212,7 +220,13 @@ public:
     }
 
     // assign this variable through an alloca
-    AllocaInst *variableAlloc = Builder.CreateAlloca(Int32Ty, nullptr, varName);
+    AllocaInst *variableAlloc = Builder.CreateAlloca(bindingType, nullptr, varName);
+    if (bindingType->isIntegerTy(32)) {
+      AllocaInst *variableAlloc = Builder.CreateAlloca(Int32Ty, nullptr, varName);
+    }
+    else if (bindingType->isIntegerTy(1)) {
+      AllocaInst *variableAlloc = Builder.CreateAlloca(BoolTy, nullptr, varName);
+    }
     Builder.CreateStore(bindingVal, variableAlloc);
     nameMap[varName] = variableAlloc;
 
@@ -243,6 +257,7 @@ public:
     Builder.SetInsertPoint(ThenBB);
     Node.getThenExpr()->accept(*this);
     Value *ThenV = V;
+    Type *ThenTy = ThenV->getType();
     Builder.CreateBr(MergeBB);
 
     ThenBB = Builder.GetInsertBlock(); // for phi node
@@ -257,7 +272,7 @@ public:
 
     // merge with phi
     Builder.SetInsertPoint(MergeBB);
-    PHINode *PN = Builder.CreatePHI(Int32Ty, 2, "iftmp");
+    PHINode *PN = Builder.CreatePHI(ThenTy, 2, "iftmp");
     PN->addIncoming(ThenV, ThenBB);
     PN->addIncoming(ElseV, ElseBB);
     V = PN;
