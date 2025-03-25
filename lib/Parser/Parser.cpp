@@ -72,8 +72,11 @@ Expr *Parser::parseExpr() {
 
   // case 2:
   // logical and relational operations
-  llvm::SmallVector <TokenKind, 8> LogRelOps = {TokenKind::logical_and, TokenKind::logical_or, TokenKind::logical_not,
-                                                TokenKind::eq, TokenKind::lt, TokenKind::le, TokenKind::gt, TokenKind::ge};
+  llvm::SmallVector <TokenKind, 8> LogRelOps = {
+    TokenKind::logical_and, TokenKind::logical_or,
+    TokenKind::eq, TokenKind::lt, TokenKind::le, TokenKind::gt, TokenKind::ge
+  };
+
   if (std::find(LogRelOps.begin(), LogRelOps.end(), Tok.getKind()) != LogRelOps.end()) {
     TokenKind Op = Tok.getKind();
     advance();
@@ -90,6 +93,18 @@ Expr *Parser::parseExpr() {
       return ErrorHandler(diag::err_no_rparen);
 
     return new Prim(Op, E1, E2);
+  }
+
+  if (Tok.is(TokenKind::logical_not)) {
+    advance();
+    Expr *E1 = parseExpr();
+    if (!E1)
+      return ErrorHandler();
+
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+
+    return new Prim(TokenKind::logical_not, E1);
   }
 
   // case 3:
