@@ -1,0 +1,5 @@
+(let ([x 5])
+  (let ([result (if (> x 3) 
+                    (let ([x 10]) (+ x 5))
+                    (let ([x 2]) (- x 1)))])
+    result))
