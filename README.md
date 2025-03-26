@@ -69,3 +69,10 @@ git pull
 
 The files most likely to change are `./tests/test_script.py` and the `./tools/runtime` directory. You can freely modify the remaining files with minimal risk of merge conflicts.
 
+---
+`parseExpr` always returns an Expr  
+see "explicate control" in the EoC book for each chapter for converted recursive stuff to sequential LLVM IR  
+cmake configure -fno-rtti  
+
+Testing:  
+`llc ./int_01.ll -filetype=obj -o 01.o` to convert the llvm ir to object file. can then run it with `clang -o 01 ./01.o ./tools/runtime/runtime.c`. Can also run `ninja check` in the build folder.    

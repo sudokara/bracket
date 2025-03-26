@@ -6,8 +6,10 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/ADT/StringMap.h"
 
 using llvm::StringRef;
+using llvm::StringMap;
 using namespace llracket;
 
 class Lexer {

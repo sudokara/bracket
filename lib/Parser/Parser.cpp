@@ -21,6 +21,13 @@ Expr *Parser::parseExpr() {
     return nullptr;
   };
 
+  // boolean
+  if (Tok.is(TokenKind::boolean_literal)) {
+    Bool *BoolExpr = new Bool(Tok.getText());
+    advance();
+    return BoolExpr;
+  }
+
   // variable
   if (Tok.is(TokenKind::identifier)) {
     Var *VarExpr = new Var(Tok.getText());
@@ -40,6 +47,67 @@ Expr *Parser::parseExpr() {
   // we have seen a left parenthesis so far for all 
   // tokens below this point
 
+  // case 1:
+  // if condition
+  if (Tok.is(TokenKind::kw_IF)) {
+    advance ();
+
+    Expr *Cond = parseExpr();
+    if (!Cond)
+      return ErrorHandler();
+
+    Expr *Then = parseExpr();
+    if (!Then)
+      return ErrorHandler();
+
+    Expr *Else = parseExpr();
+    if (!Else)
+      return ErrorHandler();
+
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+
+    return new If(Cond, Then, Else);
+  }
+
+  // case 2:
+  // logical and relational operations
+  llvm::SmallVector <TokenKind, 8> LogRelOps = {
+    TokenKind::logical_and, TokenKind::logical_or,
+    TokenKind::eq, TokenKind::lt, TokenKind::le, TokenKind::gt, TokenKind::ge
+  };
+
+  if (std::find(LogRelOps.begin(), LogRelOps.end(), Tok.getKind()) != LogRelOps.end()) {
+    TokenKind Op = Tok.getKind();
+    advance();
+
+    Expr *E1 = parseExpr();
+    if (!E1)
+      return ErrorHandler();
+
+    Expr *E2 = parseExpr();
+    if (!E2)
+      return ErrorHandler();
+
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+
+    return new Prim(Op, E1, E2);
+  }
+
+  if (Tok.is(TokenKind::logical_not)) {
+    advance();
+    Expr *E1 = parseExpr();
+    if (!E1)
+      return ErrorHandler();
+
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+
+    return new Prim(TokenKind::logical_not, E1);
+  }
+
+  // case 3:
   // let expression
   if (Tok.is(TokenKind::kw_LET)) {
     advance();
