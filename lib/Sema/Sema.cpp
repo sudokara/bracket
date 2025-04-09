@@ -40,8 +40,17 @@ public:
   }
 
   virtual void visit(Program &Node) override {
-    if (Node.getExpr())
+    if (Node.getExpr()) {
       Node.getExpr()->accept(*this);
+
+      // just (read) is an error
+      if (auto *Prim = llvm::dyn_cast<::Prim>(Node.getExpr())) {
+        if (Prim->getOp() == tok::read) {
+          llvm::errs() << "Error: Cannot determine type for standalone read expression\n";
+          HasError = true;
+        }
+      }
+    }
     else
       HasError = true;
   };
@@ -79,7 +88,7 @@ public:
     auto Op = Node.getOp();
 
     if (Op == tok::read) {
-      setExprType(&Node, ExprTypes::Integer);
+      setExprType(&Node, ExprTypes::Unknown);
       return;
     }
 
@@ -87,6 +96,15 @@ public:
       if (Node.getE1() and !Node.getE2()) {
         Node.getE1()->accept(*this);
         ExprTypes E1Type = getExprType(Node.getE1());
+
+        auto *E1Prim = llvm::dyn_cast<::Prim>(Node.getE1());
+        bool E1IsRead = E1Prim && E1Prim->getOp() == tok::read;
+        
+        if (E1IsRead) {
+          // Since unary minus requires an integer, infer the read as integer
+          setExprType(E1Prim, ExprTypes::Integer);
+          E1Type = ExprTypes::Integer;
+        }
 
         if (E1Type != ExprTypes::Integer) {
           raiseTypeError(&Node, ExprTypes::Integer, E1Type);
@@ -106,6 +124,33 @@ public:
       Node.getE2()->accept(*this);
 
       ExprTypes E1Type = getExprType(Node.getE1()), E2Type = getExprType(Node.getE2());
+
+      auto *E1Prim = llvm::dyn_cast<::Prim>(Node.getE1()), *E2Prim = llvm::dyn_cast<::Prim>(Node.getE2());
+
+      bool E1isread = E1Prim && E1Prim->getOp() == tok::read;
+      bool E2isread = E2Prim && E2Prim->getOp() == tok::read;
+
+      if (E1isread && E2isread) {
+        setExprType(E1Prim, ExprTypes::Integer);
+        setExprType(E2Prim, ExprTypes::Integer);
+        E1Type = E2Type = ExprTypes::Integer;
+      }
+      else if (E1isread) {
+        // E1 is read, set its type to E2's type
+        setExprType(E1Prim, E2Type);
+        E1Type = E2Type;
+      }
+      else if (E2isread) {
+        // E2 is read, set its type to E1's type
+        setExprType(E2Prim, E1Type);
+        E2Type = E1Type;
+      }
+      if (E1Type == ExprTypes::Unknown || E2Type == ExprTypes::Unknown) {
+        llvm::errs() << "Error: Cannot determine type for read expression\n";
+        HasError = true;
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
 
       if (E1Type != ExprTypes::Integer) {
         raiseTypeError(&Node, ExprTypes::Integer, E1Type);
@@ -129,6 +174,34 @@ public:
 
       ExprTypes E1Type = getExprType(Node.getE1()), E2Type = getExprType(Node.getE2());
 
+      auto *E1Prim = llvm::dyn_cast<::Prim>(Node.getE1()), *E2Prim = llvm::dyn_cast<::Prim>(Node.getE2());
+
+      bool E1isread = E1Prim && E1Prim->getOp() == tok::read;
+      bool E2isread = E2Prim && E2Prim->getOp() == tok::read;
+
+      if (E1isread && E2isread) {
+        // both are read expressions, we cannot determine the type
+        setExprType(E1Prim, ExprTypes::Integer);
+        setExprType(E2Prim, ExprTypes::Integer);
+        E1Type = E2Type = ExprTypes::Integer;
+      }
+      else if (E1isread) {
+        // E1 is read, set its type to E2's type
+        setExprType(E1Prim, E2Type);
+        E1Type = E2Type;
+      }
+      else if (E2isread) {
+        // E2 is read, set its type to E1's type
+        setExprType(E2Prim, E1Type);
+        E2Type = E1Type;
+      }
+      if (E1Type == ExprTypes::Unknown || E2Type == ExprTypes::Unknown) {
+        llvm::errs() << "Error: Cannot determine type for read expression\n";
+        HasError = true;
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
       if (E1Type != ExprTypes::Integer) {
         raiseTypeError(&Node, ExprTypes::Integer, E1Type);
         setExprType(&Node, ExprTypes::Unknown);
@@ -151,6 +224,35 @@ public:
 
       ExprTypes E1Type = getExprType(Node.getE1()), E2Type = getExprType(Node.getE2());
 
+      auto *E1Prim = llvm::dyn_cast<::Prim>(Node.getE1()), *E2Prim = llvm::dyn_cast<::Prim>(Node.getE2());
+
+      bool E1isread = E1Prim && E1Prim->getOp() == tok::read;
+      bool E2isread = E2Prim && E2Prim->getOp() == tok::read;
+
+      if (E1isread && E2isread) {
+        // both are read expressions, we cannot determine the type
+        llvm::errs() << "Error: Cannot determine type for read expression\n";
+        HasError = true;
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+      else if (E1isread) {
+        // E1 is read, set its type to E2's type
+        setExprType(E1Prim, E2Type);
+        E1Type = E2Type;
+      }
+      else if (E2isread) {
+        // E2 is read, set its type to E1's type
+        setExprType(E2Prim, E1Type);
+        E2Type = E1Type;
+      }
+      if (E1Type == ExprTypes::Unknown || E2Type == ExprTypes::Unknown) {
+        llvm::errs() << "Error: Cannot determine type for read expression\n";
+        HasError = true;
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
       if (E1Type != E2Type) {
         raiseTypeError(&Node, E1Type, E2Type);
         setExprType(&Node, ExprTypes::Unknown);
@@ -166,6 +268,33 @@ public:
       Node.getE2()->accept(*this);
 
       ExprTypes E1Type = getExprType(Node.getE1()), E2Type = getExprType(Node.getE2());
+
+      auto *E1Prim = llvm::dyn_cast<::Prim>(Node.getE1()), *E2Prim = llvm::dyn_cast<::Prim>(Node.getE2());
+
+      bool E1isread = E1Prim && E1Prim->getOp() == tok::read;
+      bool E2isread = E2Prim && E2Prim->getOp() == tok::read;
+
+      if (E1isread && E2isread) {
+        setExprType(E1Prim, ExprTypes::Bool);
+        setExprType(E2Prim, ExprTypes::Bool);
+        E1Type = E2Type = ExprTypes::Bool;
+      }
+      else if (E1isread) {
+        // E1 is read, set its type to E2's type
+        setExprType(E1Prim, E2Type);
+        E1Type = E2Type;
+      }
+      else if (E2isread) {
+        // E2 is read, set its type to E1's type
+        setExprType(E2Prim, E1Type);
+        E2Type = E1Type;
+      }
+      if (E1Type == ExprTypes::Unknown || E2Type == ExprTypes::Unknown) {
+        llvm::errs() << "Error: Cannot determine type for read expression\n";
+        HasError = true;
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
 
       if (E1Type != ExprTypes::Bool) {
         raiseTypeError(&Node, ExprTypes::Bool, E1Type);
@@ -187,6 +316,14 @@ public:
       Node.getE1()->accept(*this);
 
       ExprTypes E1Type = getExprType(Node.getE1());
+
+      auto *E1Prim = llvm::dyn_cast<::Prim>(Node.getE1());
+      bool E1IsRead = E1Prim && E1Prim->getOp() == tok::read;
+      
+      if (E1IsRead) {
+        setExprType(E1Prim, ExprTypes::Bool);
+        E1Type = ExprTypes::Bool;
+      }
 
       if (E1Type != ExprTypes::Bool) {
         raiseTypeError(&Node, ExprTypes::Bool, E1Type);
@@ -221,8 +358,17 @@ public:
   }
 
   virtual void visit(Let &Node) override {
-    if (Node.getBinding())
+    if (Node.getBinding()) {
+      // direct read
       Node.getBinding()->accept(*this); // accept the binding expression first, no errors in assignment
+      
+      if (auto *Prim = llvm::dyn_cast<::Prim> (Node.getBinding())) {
+        if (Prim->getOp() == tok::read) {
+          setExprType(Prim, ExprTypes::Integer);
+          setExprType(&Node, ExprTypes::Integer);
+        }
+      }
+    }
 
     ExprTypes BindingType = getExprType(Node.getBinding()), oldType = ExprTypes::Unknown;
     bool shadowed = ScopedVariables.count(Node.getVarName()); // true if a variable of same name was defined previously
@@ -264,6 +410,35 @@ public:
       Node.getElseExpr()->accept(*this); // accept the else expression
 
     ExprTypes ThenType = getExprType(Node.getThenExpr()), ElseType = getExprType(Node.getElseExpr());
+
+    // Handle cases with read expressions in the branches
+    if (ThenType == ExprTypes::Unknown && ElseType != ExprTypes::Unknown) {
+      // If one branch is read and the other has a known type, infer the read type
+      auto *ThenPrim = llvm::dyn_cast<::Prim>(Node.getThenExpr());
+      if (ThenPrim && ThenPrim->getOp() == tok::read) {
+        setExprType(ThenPrim, ElseType);
+        ThenType = ElseType;
+      }
+    } 
+    else if (ThenType != ExprTypes::Unknown && ElseType == ExprTypes::Unknown) {
+      auto *ElsePrim = llvm::dyn_cast<::Prim>(Node.getElseExpr());
+      if (ElsePrim && ElsePrim->getOp() == tok::read) {
+        setExprType(ElsePrim, ThenType);
+        ElseType = ThenType;
+      }
+    }
+    else if (ThenType == ExprTypes::Unknown && ElseType == ExprTypes::Unknown) {
+      // Both branches are reads - this is ambiguous, so error
+      auto *ThenPrim = llvm::dyn_cast<::Prim>(Node.getThenExpr());
+      auto *ElsePrim = llvm::dyn_cast<::Prim>(Node.getElseExpr());
+      if (ThenPrim && ThenPrim->getOp() == tok::read && 
+          ElsePrim && ElsePrim->getOp() == tok::read) {
+        llvm::errs() << "Error: Cannot determine type for read expression\n";
+        HasError = true;
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+    }
 
     if (ThenType != ElseType) {
       raiseTypeError(&Node, ThenType, ElseType);
