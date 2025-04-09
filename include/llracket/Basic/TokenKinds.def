@@ -13,6 +13,7 @@ TOK(eof)
 TOK(integer_literal)
 TOK(identifier)
 TOK(boolean_literal)
+TOK(void_literal)
 
 // punctuators
 PUNCTUATOR(l_paren, "(")
@@ -22,6 +23,10 @@ PUNCTUATOR(r_square, "]")
 PUNCTUATOR(plus, "+")
 PUNCTUATOR(minus, "-")
 PUNCTUATOR(read, "read")
+PUNCTUATOR(setbang, "set!")
+PUNCTUATOR(begin, "begin")
+PUNCTUATOR(whileloop, "while")
+
 
 // comparisons
 PUNCTUATOR(eq, "eq?")
@@ -37,9 +42,11 @@ PUNCTUATOR(logical_and, "and")
 PUNCTUATOR(logical_or, "or")
 PUNCTUATOR(logical_not, "not")
 
+
 // Keywords with feature flags
 KEYWORD(LET, KEYALL)
 KEYWORD(IF, KEYALL)
+KEYWORD(VOID, KEYALL)
 
 #undef KEYWORD
 #undef PUNCTUATOR

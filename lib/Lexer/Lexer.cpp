@@ -16,8 +16,12 @@ LLVM_READNONE inline static bool isAlphanumeric(char c) {
   return isLetter(c) || isDigit(c);
 }
 
-LLVM_READNONE inline static bool isAlphanumeric_question(char c) {
-  return isAlphanumeric(c) || c == '_' || c == '?';
+LLVM_READNONE inline static bool isSpecialChar(char c) {
+  return c == '!' || c == '?' || c == '_';
+}
+
+LLVM_READNONE inline static bool isAlphanumeric_special(char c) {
+  return isAlphanumeric(c) || isSpecialChar(c);
 }
 } // namespace charinfo
 
@@ -57,7 +61,7 @@ void Lexer::next(Token &token) {
   }
   if (charinfo::isLetter(*BufferPtr)) {
     const char *End = BufferPtr + 1;
-    while (charinfo::isAlphanumeric_question(*End))
+    while (charinfo::isAlphanumeric_special(*End))
       ++End;
 
     llvm::StringRef Text(BufferPtr, End - BufferPtr);
@@ -68,7 +72,11 @@ void Lexer::next(Token &token) {
       {"and", TokenKind::logical_and},
       {"or", TokenKind::logical_or},
       {"not", TokenKind::logical_not},
-      {"eq?", TokenKind::eq}
+      {"eq?", TokenKind::eq},
+      {"set!", TokenKind::setbang},
+      {"begin", TokenKind::begin},
+      {"while", TokenKind::whileloop},
+      {"void", TokenKind::void_literal},
     });
 
     if (text_map.find(Text) != text_map.end()) {
