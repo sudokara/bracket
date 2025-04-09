@@ -14,10 +14,4 @@ public:
   bool semantic(AST *Tree);
 };
 
-enum class ExprTypes {
-  Unknown,
-  Integer,
-  Bool
-};
-
 #endif

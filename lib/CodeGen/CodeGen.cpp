@@ -18,9 +18,11 @@ class ToIRVisitor : public ASTVisitor {
   Constant *Int32Zero;
   Value *V;
   StringMap<Value *> nameMap;
+  ProgramInfo TypeInfo;
+  Program* RootProgram;
 
 public:
-  ToIRVisitor(Module *M) : M(M), Builder(M->getContext()) {
+  ToIRVisitor(Module *M) : M(M), Builder(M->getContext()), RootProgram(nullptr) {
     VoidTy = Type::getVoidTy(M->getContext());
     Int32Ty = Type::getInt32Ty(M->getContext());
     BoolTy = Type::getInt1Ty(M->getContext()); // i1 is 1 bit integer
@@ -28,8 +30,30 @@ public:
     Int32Zero = ConstantInt::get(Int32Ty, 0, true);
   }
 
+  ExprTypes getExprType(const Expr* E) {
+    if (!RootProgram) return ExprTypes::Unknown;
+    
+    std::string Key = "type_" + std::to_string(reinterpret_cast<uintptr_t>(E));
+    
+    if (TypeInfo.count(Key)) {
+      try {
+        int TypeValue = std::any_cast<int>(TypeInfo[Key]);
+        return static_cast<ExprTypes>(TypeValue);
+      } catch (const std::bad_any_cast&) {
+        return ExprTypes::Unknown;
+      }
+    }
+    
+    return ExprTypes::Unknown;
+  }
+
   // something was exlpained here. you should see. 
   void run(AST *Tree) {
+    if (auto* P = dynamic_cast<Program*>(Tree)) {
+      RootProgram = P;
+      TypeInfo = P->getInfo();
+    }
+
     FunctionType *MainFty = FunctionType::get(Int32Ty, {Int32Ty, PtrTy}, false);
     Function *MainFn =
         Function::Create(MainFty, GlobalValue::ExternalLinkage, "main", M);
@@ -47,13 +71,14 @@ public:
       FunctionType *WriteBoolFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
       Function *WriteBoolFn = Function::Create(
           WriteBoolFnTy, GlobalValue::ExternalLinkage, "write_bool", M);
-      Builder.CreateCall(WriteBoolFnTy, WriteBoolFn, {V});
+      Value *ExtendedV = Builder.CreateZExt(V, Int32Ty, "ext_bool");
+      Builder.CreateCall(WriteBoolFn, {ExtendedV}); // Remove WriteBoolFnTy
     } else {
       // not bool, so int
       FunctionType *WriteIntFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
       Function *WriteIntFn = Function::Create(
           WriteIntFnTy, GlobalValue::ExternalLinkage, "write_int", M);
-      Builder.CreateCall(WriteIntFnTy, WriteIntFn, {V});
+      Builder.CreateCall(WriteIntFn, {V}); // Remove WriteIntFnTy
     }
 
     Builder.CreateRet(Int32Zero);
@@ -95,14 +120,23 @@ public:
 
     if (Op == tok::read) {
       // creating a custom function: see docs and TB Chapter 4
+      ExprTypes NodeType = getExprType(&Node);
+
       Function *ReadFn;
       if ((ReadFn = M->getFunction("read_value")) == nullptr) {
         FunctionType *ReadFty = FunctionType::get(Int32Ty, {Int32Ty}, false); // returns int32, takes params as pointer
         ReadFn = Function::Create(ReadFty, GlobalValue::ExternalLinkage, // return type, accessibility, name, module
                                   "read_value", M);
       }
-      Value *IntTypeParam = ConstantInt::get(Int32Ty, 0, true);
-      V = Builder.CreateCall(ReadFn, {IntTypeParam}); // calls read_value(0) for integer reading
+      // Value *IntTypeParam = ConstantInt::get(Int32Ty, 0, true);
+      // V = Builder.CreateCall(ReadFn, {IntTypeParam}); // calls read_value(0) for integer reading
+      if (NodeType == ExprTypes::Bool) {
+        V = Builder.CreateCall(ReadFn, {ConstantInt::get(Int32Ty, 1, true)}); // calls read_value(1) for boolean reading
+        // convert int32 to bool
+        V = Builder.CreateICmpNE(V, ConstantInt::get(Int32Ty, 0, true), "read_bool");
+      } else {
+        V = Builder.CreateCall(ReadFn, {ConstantInt::get(Int32Ty, 0, true)}); // calls read_value(0) for integer reading
+      }
       return;
     }
 
@@ -161,7 +195,25 @@ public:
     // logical operators
     if (Op == tok::logical_not) {
       Node.getE1()->accept(*this);
-      V = Builder.CreateNot(V);
+    
+      // Get the semantic type of the expression
+      ExprTypes E1Type = getExprType(Node.getE1());
+      Value *OperandV = V;
+      
+      // If it's semantically a boolean, ensure the LLVM type is i1
+      if (E1Type == ExprTypes::Bool && !OperandV->getType()->isIntegerTy(1)) {
+          OperandV = Builder.CreateICmpNE(OperandV, 
+                                        ConstantInt::get(OperandV->getType(), 0), 
+                                        "to_bool");
+      }
+      // If it's not a boolean at LLVM level, force conversion
+      else if (!OperandV->getType()->isIntegerTy(1)) {
+          OperandV = Builder.CreateICmpNE(OperandV, 
+                                        ConstantInt::get(OperandV->getType(), 0), 
+                                        "to_bool");
+      }
+      
+      V = Builder.CreateNot(OperandV, "logical_not");
       return;
     }
 
@@ -233,13 +285,27 @@ public:
       oldBinding = nameMap[varName];
     }
 
+    ExprTypes bindingExprType = getExprType(Node.getBinding());
+    
     // assign this variable through an alloca
     AllocaInst *variableAlloc = nullptr;
-    if (bindingType->isIntegerTy(1)) {
-      variableAlloc = Builder.CreateAlloca(BoolTy, nullptr, varName);
-    }
-    else {
-      variableAlloc = Builder.CreateAlloca(Int32Ty, nullptr, varName);
+    if (bindingExprType == ExprTypes::Bool || bindingType->isIntegerTy(1)) {
+        // Always use BoolTy for boolean expressions
+        variableAlloc = Builder.CreateAlloca(BoolTy, nullptr, varName);
+        
+        // If the binding value is not already a boolean, convert it
+        if (!bindingType->isIntegerTy(1)) {
+            bindingVal = Builder.CreateICmpNE(bindingVal, 
+                                             ConstantInt::get(bindingType, 0), 
+                                             "to_bool");
+        }
+    } else {
+        variableAlloc = Builder.CreateAlloca(Int32Ty, nullptr, varName);
+        
+        // If the binding value is a boolean, convert it to integer
+        if (bindingType->isIntegerTy(1)) {
+            bindingVal = Builder.CreateZExt(bindingVal, Int32Ty, "bool_to_int");
+        }
     }
     Builder.CreateStore(bindingVal, variableAlloc);
     nameMap[varName] = variableAlloc;
@@ -275,28 +341,49 @@ public:
     Node.getThenExpr()->accept(*this);
     Value *ThenV = V;
     Type *ThenTy = ThenV->getType();
-    bool isInt = ThenTy->isIntegerTy(32);
     Builder.CreateBr(MergeBB);
-
     ThenBB = Builder.GetInsertBlock(); // for phi node
     
     // else block
     Builder.SetInsertPoint(ElseBB);
     Node.getElseExpr()->accept(*this);
     Value *ElseV = V;
+    Type *ElseTy = ElseV->getType();
     Builder.CreateBr(MergeBB);
-
     ElseBB = Builder.GetInsertBlock(); // for phi node
 
     // merge with phi
     Builder.SetInsertPoint(MergeBB);
 
-    PHINode *PN = nullptr;
-    if (isInt)
-      PN = Builder.CreatePHI(Int32Ty, 2, "iftmp");
-    else
-      PN = Builder.CreatePHI(BoolTy, 2, "iftmp");
-
+    ExprTypes NodeType = getExprType(&Node);
+    
+    // Choose the proper type for the PHI node based on the semantic analysis
+    Type *PhiType;
+    if (NodeType == ExprTypes::Bool) {
+      // If semantic analysis determined this is a Bool expression
+      PhiType = BoolTy;
+      
+      // Convert values if needed
+      if (!ThenV->getType()->isIntegerTy(1)) {
+        ThenV = Builder.CreateICmpNE(ThenV, ConstantInt::get(ThenV->getType(), 0), "to_bool");
+      }
+      if (!ElseV->getType()->isIntegerTy(1)) {
+        ElseV = Builder.CreateICmpNE(ElseV, ConstantInt::get(ElseV->getType(), 0), "to_bool");
+      }
+    } else {
+      // If semantic analysis determined this is an Integer expression
+      PhiType = Int32Ty;
+      
+      // Convert values if needed
+      if (ThenV->getType()->isIntegerTy(1)) {
+        ThenV = Builder.CreateZExt(ThenV, Int32Ty, "bool_to_int");
+      }
+      if (ElseV->getType()->isIntegerTy(1)) {
+        ElseV = Builder.CreateZExt(ElseV, Int32Ty, "bool_to_int");
+      }
+    }
+    
+    PHINode *PN = Builder.CreatePHI(PhiType, 2, "iftmp");
     PN->addIncoming(ThenV, ThenBB);
     PN->addIncoming(ElseV, ElseBB);
     V = PN;

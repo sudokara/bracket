@@ -8,9 +8,32 @@ class ProgramCheck : public ASTVisitor {
   llvm::StringSet<> ScopedVariables;
   StringMap <ExprTypes> VariableTypes;
   DenseMap <const Expr*, ExprTypes> ExpressionTypes;
+  Program *RootProgram;
 
 public:
-  ProgramCheck() : HasError(false) {}
+  ProgramCheck() : HasError(false), RootProgram(nullptr) {}
+
+  void setRootProgram(Program *Root) {
+    RootProgram = Root;
+  }
+
+  void saveExpressionTypes() {
+    if (!RootProgram) {
+      llvm::errs() << "Error: Root program not set when trying to save expression types!\n";
+      return;
+    }
+
+    ProgramInfo Info = RootProgram->getInfo();
+    for (const auto &Pair : ExpressionTypes) {
+      const Expr *Node = Pair.first;
+      ExprTypes Type = Pair.second;
+
+      std::string Key = "type_" + std::to_string(reinterpret_cast<uintptr_t>(Node));
+      Info[Key] = static_cast<int>(Type);
+    }
+
+    RootProgram->setInfo(Info);
+  }
 
   bool hasError() { return HasError; }
 
@@ -40,6 +63,7 @@ public:
   }
 
   virtual void visit(Program &Node) override {
+    setRootProgram(&Node);
     if (Node.getExpr()) {
       Node.getExpr()->accept(*this);
 
@@ -440,6 +464,20 @@ public:
       }
     }
 
+    if (ThenType == ExprTypes::Unknown && ElseType == ExprTypes::Bool) {
+      if (auto *ThenPrim = llvm::dyn_cast<Prim>(Node.getThenExpr()))
+          if (ThenPrim->getOp() == tok::read) {
+            setExprType(ThenPrim, ExprTypes::Bool);
+            ThenType = ExprTypes::Bool;
+          }
+    } else if (ElseType == ExprTypes::Unknown && ThenType == ExprTypes::Bool) {
+        if (auto *ElsePrim = llvm::dyn_cast<Prim>(Node.getElseExpr()))
+            if (ElsePrim->getOp() == tok::read) {
+              setExprType(ElsePrim, ExprTypes::Bool);
+              ElseType = ExprTypes::Bool;
+            }
+    }
+
     if (ThenType != ElseType) {
       raiseTypeError(&Node, ThenType, ElseType);
       setExprType(&Node, ExprTypes::Unknown);
@@ -456,5 +494,6 @@ bool Sema::semantic(AST *Tree) {
     return false;
   ProgramCheck Check;
   Tree->accept(Check);
+  Check.saveExpressionTypes();
   return !Check.hasError();
 }

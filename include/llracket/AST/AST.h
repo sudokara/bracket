@@ -6,6 +6,12 @@
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringRef.h>
 
+enum class ExprTypes {
+  Unknown,
+  Integer,
+  Bool
+};
+
 class AST;
 class Program;
 typedef llvm::StringMap<std::any> ProgramInfo;
@@ -46,6 +52,7 @@ public:
 
   Expr *getExpr() const { return E; };
   ProgramInfo getInfo() const { return Info; };
+  void setInfo(ProgramInfo Info) { this->Info = Info; };
 
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 };
