@@ -61,24 +61,38 @@ public:
     Builder.SetInsertPoint(BB); // builder inserts everything that is called like CreateCall at this insertion point
     Tree->accept(*this);
 
-    // FunctionType *WriteFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
-    // Function *WriteFn = Function::Create(
-    //     WriteFnTy, GlobalValue::ExternalLinkage, "write_int", M);
-    // Builder.CreateCall(WriteFnTy, WriteFn, {V});
+    // if (V->getType()->isIntegerTy(1)) {
+    //   // boolean (bitwidth 1)
+    //   FunctionType *WriteBoolFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
+    //   Function *WriteBoolFn = Function::Create(
+    //       WriteBoolFnTy, GlobalValue::ExternalLinkage, "write_bool", M);
+    //   Value *ExtendedV = Builder.CreateZExt(V, Int32Ty, "ext_bool");
+    //   Builder.CreateCall(WriteBoolFn, {ExtendedV}); // Remove WriteBoolFnTy
+    // } else {
+    //   // not bool, so int
+    //   FunctionType *WriteIntFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
+    //   Function *WriteIntFn = Function::Create(
+    //       WriteIntFnTy, GlobalValue::ExternalLinkage, "write_int", M);
+    //   Builder.CreateCall(WriteIntFn, {V}); // Remove WriteIntFnTy
+    // }
+    ExprTypes resultType = getExprType(dynamic_cast<Program*>(Tree)->getExpr());
 
-    if (V->getType()->isIntegerTy(1)) {
+    if (resultType == ExprTypes::Void) {
+    } 
+    else if (V->getType()->isIntegerTy(1)) {
       // boolean (bitwidth 1)
       FunctionType *WriteBoolFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
       Function *WriteBoolFn = Function::Create(
           WriteBoolFnTy, GlobalValue::ExternalLinkage, "write_bool", M);
       Value *ExtendedV = Builder.CreateZExt(V, Int32Ty, "ext_bool");
-      Builder.CreateCall(WriteBoolFn, {ExtendedV}); // Remove WriteBoolFnTy
-    } else {
-      // not bool, so int
+      Builder.CreateCall(WriteBoolFn, {ExtendedV});
+    } 
+    else if (V->getType()->isIntegerTy(32)) {
+      // integer (int32)
       FunctionType *WriteIntFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
       Function *WriteIntFn = Function::Create(
           WriteIntFnTy, GlobalValue::ExternalLinkage, "write_int", M);
-      Builder.CreateCall(WriteIntFn, {V}); // Remove WriteIntFnTy
+      Builder.CreateCall(WriteIntFn, {V});
     }
 
     Builder.CreateRet(Int32Zero);
@@ -108,6 +122,22 @@ public:
       return;
     }
     if (llvm::isa<If>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<Set>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<Begin>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<While>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<Void>(Node)) {
       Node.accept(*this);
       return;
     }
@@ -270,7 +300,7 @@ public:
     }
   };
 
-  virtual void visit(Let &Node) override {
+  virtual void visit(Let &Node) override { 
     StringRef varName = Node.getVarName();
 
     // populate the binding expression first
@@ -294,18 +324,18 @@ public:
         variableAlloc = Builder.CreateAlloca(BoolTy, nullptr, varName);
         
         // If the binding value is not already a boolean, convert it
-        if (!bindingType->isIntegerTy(1)) {
-            bindingVal = Builder.CreateICmpNE(bindingVal, 
-                                             ConstantInt::get(bindingType, 0), 
-                                             "to_bool");
-        }
+        // if (!bindingType->isIntegerTy(1)) {
+        //     bindingVal = Builder.CreateICmpNE(bindingVal, 
+        //                                      ConstantInt::get(bindingType, 0), 
+        //                                      "to_bool");
+        // }
     } else {
         variableAlloc = Builder.CreateAlloca(Int32Ty, nullptr, varName);
         
         // If the binding value is a boolean, convert it to integer
-        if (bindingType->isIntegerTy(1)) {
-            bindingVal = Builder.CreateZExt(bindingVal, Int32Ty, "bool_to_int");
-        }
+        // if (bindingType->isIntegerTy(1)) {
+        //     bindingVal = Builder.CreateZExt(bindingVal, Int32Ty, "bool_to_int");
+        // }
     }
     Builder.CreateStore(bindingVal, variableAlloc);
     nameMap[varName] = variableAlloc;
@@ -388,6 +418,99 @@ public:
     PN->addIncoming(ElseV, ElseBB);
     V = PN;
   };
+
+  virtual void visit(Void &Node) override {
+    V = UndefValue::get(Int32Ty);
+  }
+
+  virtual void visit(Set &Node) override {
+    StringRef varName = Node.getVarName();
+    
+    // check if variable exists in the scope
+    if (nameMap.find(varName) == nameMap.end()) {
+      llvm::errs() << "Variable not found during codegen: " << varName << "\n";
+      V = UndefValue::get(Int32Ty);
+      return;
+    }
+    
+    // Get the allocated location for the variable
+    Value *varPtr = nameMap[varName];
+    Type *varType = varPtr->getType();
+    
+    // eval the expression to store
+    Node.getValue()->accept(*this);
+    Value *valueToStore = V;
+    Type *valueType = valueToStore->getType();
+    
+    // type conversion if necessary
+    // if (varType->isIntegerTy(1) && valueType->isIntegerTy(32)) {
+    //   // convert int to bool for storing
+    //   valueToStore = Builder.CreateICmpNE(
+    //       valueToStore, ConstantInt::get(Int32Ty, 0), "int_to_bool");
+    // } 
+    // else if (varType->isIntegerTy(32) && valueType->isIntegerTy(1)) {
+    //   // convert bool to int for storing
+    //   valueToStore = Builder.CreateZExt(valueToStore, Int32Ty, "bool_to_int");
+    // }
+    
+    Builder.CreateStore(valueToStore, varPtr);
+    
+    V = UndefValue::get(Int32Ty);
+  }
+
+  virtual void visit(Begin &Node) override {
+    const std::vector<Expr*> &Exprs = Node.getExprs();
+    
+    if (Exprs.empty()) {
+      // empty begin should have been caught in semantic analysis
+      V = UndefValue::get(Int32Ty);
+      return;
+    }
+    
+    // evaluate each expression in sequence
+    for (Expr *E : Exprs) {
+      if (E) {
+        E->accept(*this);
+      }
+    }
+    // the last expression already updated the value of V
+  }
+
+  virtual void visit(While &Node) override {
+    Function *CurrentFunction = Builder.GetInsertBlock()->getParent();
+    
+    // basic blocks
+    BasicBlock *LoopCondBB = BasicBlock::Create(M->getContext(), "loop.cond", CurrentFunction);
+    BasicBlock *LoopBodyBB = BasicBlock::Create(M->getContext(), "loop.body", CurrentFunction);
+    BasicBlock *LoopEndBB = BasicBlock::Create(M->getContext(), "loop.end", CurrentFunction);
+    
+    // branch to loop condition
+    Builder.CreateBr(LoopCondBB);
+    
+    // emit the condition code
+    Builder.SetInsertPoint(LoopCondBB);
+    Node.getCondition()->accept(*this);
+    Value *CondV = V;
+    
+    // ensure the condition is a boolean
+    if (!CondV->getType()->isIntegerTy(1)) {
+      CondV = Builder.CreateICmpNE(CondV, ConstantInt::get(CondV->getType(), 0), "loopcond");
+    }
+    
+    // create conditional branch based on the condition
+    Builder.CreateCondBr(CondV, LoopBodyBB, LoopEndBB);
+    
+    // loop body code
+    Builder.SetInsertPoint(LoopBodyBB);
+    Node.getBody()->accept(*this);
+    Builder.CreateBr(LoopCondBB);  // loop back to condition
+    
+    // continue after the loop
+    Builder.SetInsertPoint(LoopEndBB);
+    
+    V = UndefValue::get(Int32Ty);
+  }
+
 };
 }; // namespace
 
