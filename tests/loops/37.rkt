@@ -1,0 +1,1 @@
+(set! undeclared_var 10)
