@@ -58,6 +58,7 @@ public:
     switch (T) {
       case ExprTypes::Integer: return "Integer";
       case ExprTypes::Bool: return "Boolean";
+      case ExprTypes::Void: return "Void";
       default: return "Unknown";
     }
   }
@@ -102,6 +103,22 @@ public:
       return;
     }
     if (llvm::isa<If>(Node)) { // expr is an if expression
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<Set>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<Begin>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<While>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<Void>(Node)) {
       Node.accept(*this);
       return;
     }
@@ -485,6 +502,95 @@ public:
     }
     
     setExprType(&Node, ThenType); // set the type of the if expression to the type of the then expression
+  }
+
+  virtual void visit(Void &Node) override {
+    setExprType(&Node, ExprTypes::Void);
+  }
+
+  virtual void visit(Set &Node) override {
+    // scoping
+    if (!ScopedVariables.count(Node.getVarName())) {
+      llvm::errs() << "Error: Variable " << Node.getVarName() << " is not defined\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+    
+    if (Node.getValue()) {
+      Node.getValue()->accept(*this);
+      
+      ExprTypes ValueType = getExprType(Node.getValue());
+      ExprTypes VarType = VariableTypes[Node.getVarName()];
+      
+      // handling for read()
+      auto *ValuePrim = llvm::dyn_cast<::Prim>(Node.getValue());
+      if (ValuePrim && ValuePrim->getOp() == tok::read) {
+        setExprType(ValuePrim, VarType);
+        ValueType = VarType;
+      }
+      
+      // typechecking
+      if (ValueType != VarType && ValueType != ExprTypes::Unknown) {
+        raiseTypeError(&Node, VarType, ValueType);
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+    }
+    
+    // set! always returns Void
+    setExprType(&Node, ExprTypes::Void);
+  }
+
+  virtual void visit(Begin &Node) override {
+    ExprTypes LastType = ExprTypes::Void;  // Default in case of empty list
+    
+    const std::vector<Expr*> &Exprs = Node.getExprs();
+    
+    if (Exprs.empty()) {
+      // empty begin is technically an error
+      llvm::errs() << "Error: Empty begin expression\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+    
+    for (Expr *E : Exprs) {
+      if (E) {
+        E->accept(*this);
+        LastType = getExprType(E);
+      }
+    }
+    
+    setExprType(&Node, LastType);
+  }
+
+  virtual void visit(While &Node) override {
+    if (Node.getCondition()) {
+      Node.getCondition()->accept(*this);
+      
+      ExprTypes CondType = getExprType(Node.getCondition());
+      
+      // read in condition
+      auto *CondPrim = llvm::dyn_cast<::Prim>(Node.getCondition());
+      if (CondPrim && CondPrim->getOp() == tok::read) {
+        setExprType(CondPrim, ExprTypes::Bool);
+        CondType = ExprTypes::Bool;
+      }
+      
+      // condition must be boolean
+      if (CondType != ExprTypes::Bool) {
+        raiseTypeError(Node.getCondition(), ExprTypes::Bool, CondType);
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+    }
+    
+    if (Node.getBody()) {
+      Node.getBody()->accept(*this);
+    }
+    
+    setExprType(&Node, ExprTypes::Void);
   }
 };
 } // namespace
