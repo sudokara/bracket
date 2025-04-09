@@ -76,7 +76,7 @@ void Lexer::next(Token &token) {
       {"set!", TokenKind::setbang},
       {"begin", TokenKind::begin},
       {"while", TokenKind::whileloop},
-      {"void", TokenKind::void_literal},
+      {"void", TokenKind::kw_VOID},
     });
 
     if (text_map.find(Text) != text_map.end()) {
