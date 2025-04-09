@@ -37,10 +37,25 @@ public:
     Builder.SetInsertPoint(BB); // builder inserts everything that is called like CreateCall at this insertion point
     Tree->accept(*this);
 
-    FunctionType *WriteFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
-    Function *WriteFn = Function::Create(
-        WriteFnTy, GlobalValue::ExternalLinkage, "write_int", M);
-    Builder.CreateCall(WriteFnTy, WriteFn, {V});
+    // FunctionType *WriteFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
+    // Function *WriteFn = Function::Create(
+    //     WriteFnTy, GlobalValue::ExternalLinkage, "write_int", M);
+    // Builder.CreateCall(WriteFnTy, WriteFn, {V});
+
+    if (V->getType()->isIntegerTy(1)) {
+      // boolean (bitwidth 1)
+      FunctionType *WriteBoolFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
+      Function *WriteBoolFn = Function::Create(
+          WriteBoolFnTy, GlobalValue::ExternalLinkage, "write_bool", M);
+      Builder.CreateCall(WriteBoolFnTy, WriteBoolFn, {V});
+    } else {
+      // not bool, so int
+      FunctionType *WriteIntFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
+      Function *WriteIntFn = Function::Create(
+          WriteIntFnTy, GlobalValue::ExternalLinkage, "write_int", M);
+      Builder.CreateCall(WriteIntFnTy, WriteIntFn, {V});
+    }
+
     Builder.CreateRet(Int32Zero);
   }
 
@@ -81,14 +96,13 @@ public:
     if (Op == tok::read) {
       // creating a custom function: see docs and TB Chapter 4
       Function *ReadFn;
-      if ((ReadFn = M->getFunction("read_int")) == nullptr) {
-        FunctionType *ReadFty = FunctionType::get(Int32Ty, {PtrTy}, false); // returns int32, takes params as pointer
+      if ((ReadFn = M->getFunction("read_value")) == nullptr) {
+        FunctionType *ReadFty = FunctionType::get(Int32Ty, {Int32Ty}, false); // returns int32, takes params as pointer
         ReadFn = Function::Create(ReadFty, GlobalValue::ExternalLinkage, // return type, accessibility, name, module
-                                  "read_int", M);
+                                  "read_value", M);
       }
-      AllocaInst *ReadInput =
-          Builder.CreateAlloca(PtrTy, nullptr, "read_input");
-      V = Builder.CreateCall(ReadFn, {ReadInput}); // calls the read_int function
+      Value *IntTypeParam = ConstantInt::get(Int32Ty, 0, true);
+      V = Builder.CreateCall(ReadFn, {IntTypeParam}); // calls read_value(0) for integer reading
       return;
     }
 
