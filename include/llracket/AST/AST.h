@@ -5,11 +5,13 @@
 #include <any>
 #include <llvm/ADT/StringMap.h>
 #include <llvm/ADT/StringRef.h>
+#include <vector>
 
 enum class ExprTypes {
   Unknown,
   Integer,
-  Bool
+  Bool,
+  Void
 };
 
 class AST;
@@ -22,6 +24,11 @@ class Var;
 class Let;
 class Bool;
 class If;
+class Set;
+class Begin;
+class While;
+class Void;
+
 
 class ASTVisitor {
 public:
@@ -34,6 +41,10 @@ public:
   virtual void visit(Let &) {};
   virtual void visit(Bool &) {};
   virtual void visit(If &) {};
+  virtual void visit(Set &) {};
+  virtual void visit(Begin &) {};
+  virtual void visit(While &) {};
+  virtual void visit(Void &) {};
 };
 
 class AST {
@@ -59,7 +70,7 @@ public:
 
 class Expr : public AST {
 public:
-  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf };
+  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf, ExprSet, ExprBegin, ExprWhile, ExprVoid };
 
 private:
   const ExprKind Kind;
@@ -157,6 +168,61 @@ class If: public Expr {
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
   static bool classof(const Expr *E) { return E->getKind() == ExprIf; }
+};
+
+class Set : public Expr {
+  StringRef VarName;
+  Expr *Value;
+
+public:
+  Set(StringRef VarName, Expr *Value) 
+    : Expr(ExprSet), VarName(VarName), Value(Value) {};
+
+  StringRef getVarName() const { return VarName; };
+  Expr *getValue() const { return Value; };
+
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprSet; }
+};
+
+class Begin : public Expr {
+  std::vector<Expr*> Exprs;
+
+public:
+  Begin(const std::vector<Expr*> &Exprs) 
+    : Expr(ExprBegin), Exprs(Exprs) {};
+
+  const std::vector<Expr*> &getExprs() const { return Exprs; };
+
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprBegin; }
+};
+
+class While : public Expr {
+  Expr *Condition;
+  Expr *Body;
+
+public:
+  While(Expr *Condition, Expr *Body) 
+    : Expr(ExprWhile), Condition(Condition), Body(Body) {};
+
+  Expr *getCondition() const { return Condition; };
+  Expr *getBody() const { return Body; };
+
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprWhile; }
+};
+
+class Void : public Expr {
+  public:
+    Void() : Expr(ExprVoid) {};
+  
+    virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+  
+    static bool classof(const Expr *E) { return E->getKind() == ExprVoid; }
 };
 
 #endif

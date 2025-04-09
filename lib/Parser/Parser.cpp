@@ -3,6 +3,7 @@
 #include "llracket/Lexer/Token.h"
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
+#include <vector>
 
 using namespace llracket;
 using tok::TokenKind;
@@ -28,6 +29,13 @@ Expr *Parser::parseExpr() {
     return BoolExpr;
   }
 
+  // void
+  if (Tok.is(TokenKind::void_literal)) {
+    Void *VoidExpr = new Void();
+    advance();
+    return VoidExpr;
+  }
+
   // variable
   if (Tok.is(TokenKind::identifier)) {
     Var *VarExpr = new Var(Tok.getText());
@@ -46,6 +54,81 @@ Expr *Parser::parseExpr() {
 
   // we have seen a left parenthesis so far for all 
   // tokens below this point
+
+  // Handle void expression
+  if (Tok.is(TokenKind::kw_VOID)) {
+    advance();
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+    return new Void();
+  }
+
+    // Handle begin expression
+    if (Tok.is(TokenKind::begin)) {
+      advance();
+      
+      std::vector<Expr*> Exprs;
+      
+      // Parse expressions until we see a right parenthesis
+      while (!Tok.is(TokenKind::r_paren)) {
+        Expr *E = parseExpr();
+        if (!E)
+          return ErrorHandler();
+        Exprs.push_back(E);
+      }
+      
+      // Make sure we have at least one expression
+      if (Exprs.empty()) {
+        Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText());
+        return ErrorHandler();
+      }
+      
+      if (!consume(TokenKind::r_paren))
+        return ErrorHandler(diag::err_no_rparen);
+      
+      return new Begin(Exprs);
+    }
+  
+
+  // Handle set! expression
+  if (Tok.is(TokenKind::setbang)) {
+    advance();
+    
+    if (!Tok.is(TokenKind::identifier)) {
+      Diags.report(Tok.getLocation(), diag::err_expected_identifier, Tok.getText());
+      return ErrorHandler();
+    }
+    
+    StringRef VarName = Tok.getText();
+    advance();
+    
+    Expr *Value = parseExpr();
+    if (!Value)
+      return ErrorHandler();
+    
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+    
+    return new Set(VarName, Value);
+  }
+
+  // Handle while expression
+  if (Tok.is(TokenKind::whileloop)) {
+    advance();
+    
+    Expr *Condition = parseExpr();
+    if (!Condition)
+      return ErrorHandler();
+    
+    Expr *Body = parseExpr();
+    if (!Body)
+      return ErrorHandler();
+    
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+    
+    return new While(Condition, Body);
+  }
 
   // case 1:
   // if condition
