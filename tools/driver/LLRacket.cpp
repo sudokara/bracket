@@ -8,6 +8,7 @@
 #include <llvm/Support/InitLLVM.h>
 #include <llvm/Support/SourceMgr.h>
 
+// command line arguments and flags
 static llvm::cl::opt<std::string> Input(llvm::cl::Positional,
                                         llvm::cl::desc("<input file>"),
                                         llvm::cl::Required);
@@ -17,8 +18,9 @@ static llvm::cl::opt<std::string> Output("o", llvm::cl::desc("Output file"),
 
 int main(int argc_, const char **argv_) {
   llvm::InitLLVM X(argc_, argv_);
-  llvm::cl::ParseCommandLineOptions(argc_, argv_, "LLRacket compiler\n");
+  llvm::cl::ParseCommandLineOptions(argc_, argv_, "LLRacket compiler\n"); // to parse the llvm cl options
 
+  // get the file to a memory buffer
   llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> FileOrErr =
       llvm::MemoryBuffer::getFile(Input);
 
@@ -33,7 +35,7 @@ int main(int argc_, const char **argv_) {
   DiagnosticsEngine Diags(*SrcMgr);
 
   LLRacket Compiler(SrcMgr, Diags);
-  Compiler.getSourceMgr()->AddNewSourceBuffer(std::move(*FileOrErr),
+  Compiler.getSourceMgr()->AddNewSourceBuffer(std::move(*FileOrErr), // add the file to the source manager
                                               llvm::SMLoc());
 
   return Compiler.exec();
@@ -60,7 +62,7 @@ int LLRacket::exec() {
   CodeGen CG(Module.get(), Ctx.get());
   CG.compile(Tree);
 
-  Module->print(llvm::outs(), nullptr);
+  Module->print(llvm::outs(), nullptr); // llvm::outs() is equivalent to cout in cpp
   // save to a .ll file
   saveModuleToFile(Output);
   return 0;
