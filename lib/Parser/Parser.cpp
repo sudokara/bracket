@@ -29,13 +29,6 @@ Expr *Parser::parseExpr() {
     return BoolExpr;
   }
 
-  // void
-  if (Tok.is(TokenKind::void_literal)) {
-    Void *VoidExpr = new Void();
-    advance();
-    return VoidExpr;
-  }
-
   // variable
   if (Tok.is(TokenKind::identifier)) {
     Var *VarExpr = new Var(Tok.getText());
