@@ -291,13 +291,22 @@ public:
 
     Value *varPtr = nameMap[varName];
     Type *varType = varPtr->getType();
-
-    if (varType->isIntegerTy(1)) {
+    // get the type of the var from program info expression type map
+    ExprTypes varTypeEnum = getExprType(&Node);
+    if (varTypeEnum == ExprTypes::Bool) {
+      // if the variable is a boolean, load it as a boolean
       V = Builder.CreateLoad(BoolTy, varPtr, varName + "_val");
-    }
-    else {
+    } else {
+      // otherwise load it as an integer
       V = Builder.CreateLoad(Int32Ty, varPtr, varName + "_val");
     }
+
+    // if (varType->isIntegerTy(1)) {
+    //   V = Builder.CreateLoad(BoolTy, varPtr, varName + "_val");
+    // }
+    // else {
+    //   V = Builder.CreateLoad(Int32Ty, varPtr, varName + "_val");
+    // }
   };
 
   virtual void visit(Let &Node) override { 

@@ -438,7 +438,17 @@ public:
     if (Node.getCondition())
       Node.getCondition()->accept(*this); // accept the condition expression first
 
+    // check if read() in condition
+    auto *CondPrim = llvm::dyn_cast<::Prim>(Node.getCondition());
     ExprTypes CondType = getExprType(Node.getCondition());
+    
+    // if condition is read(), infer it as boolean
+    if (CondPrim && CondPrim->getOp() == tok::read) {
+      setExprType(CondPrim, ExprTypes::Bool);
+      CondType = ExprTypes::Bool;
+    }
+
+    CondType = getExprType(Node.getCondition());
     if (CondType != ExprTypes::Bool) {
       raiseTypeError(&Node, ExprTypes::Bool, CondType);
       return;

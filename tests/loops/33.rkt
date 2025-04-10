@@ -9,5 +9,5 @@
                 (begin
                   (set! sum (+ sum 1))
                   (set! j (+ j 1))))
-              (set! i (+ i 1)))))
+              (set! i (+ i 1))))))
       sum))))
