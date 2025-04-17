@@ -657,7 +657,7 @@ public:
     if (auto *IndexInt = llvm::dyn_cast<Int>(Node.getIndex())) {
       int IndexVal = std::stoi(IndexInt->getValue().str());
 
-      if (auto *VecLiteral = llvm::dyn_cast<Vector>(Node.getVecExpr())) {
+      if (auto *VecLiteral = llvm::dyn_cast<Vec>(Node.getVecExpr())) {
         if (IndexVal < 0 || IndexVal >= static_cast<int>(VecLiteral->getLength())) {
           llvm::errs() << "Error: Vector index " << IndexVal 
                         << " out of bounds for vector of length " 
