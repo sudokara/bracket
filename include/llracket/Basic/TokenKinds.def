@@ -26,6 +26,10 @@ PUNCTUATOR(read, "read")
 PUNCTUATOR(setbang, "set!")
 PUNCTUATOR(begin, "begin")
 PUNCTUATOR(whileloop, "while")
+PUNCTUATOR(vector, "vector")
+PUNCTUATOR(vector_ref, "vector-ref")
+PUNCTUATOR(vector_length, "vector-length") 
+PUNCTUATOR(vector_set, "vector-set!")
 
 
 // comparisons

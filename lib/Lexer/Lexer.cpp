@@ -17,7 +17,7 @@ LLVM_READNONE inline static bool isAlphanumeric(char c) {
 }
 
 LLVM_READNONE inline static bool isSpecialChar(char c) {
-  return c == '!' || c == '?' || c == '_';
+  return c == '!' || c == '?' || c == '_' || c == '-';
 }
 
 LLVM_READNONE inline static bool isAlphanumeric_special(char c) {
@@ -77,6 +77,10 @@ void Lexer::next(Token &token) {
       {"begin", TokenKind::begin},
       {"while", TokenKind::whileloop},
       {"void", TokenKind::kw_VOID},
+      {"vector", TokenKind::vector},
+      {"vector-ref", TokenKind::vector_ref},
+      {"vector-length", TokenKind::vector_length},
+      {"vector-set!", TokenKind::vector_set}
     });
 
     if (text_map.find(Text) != text_map.end()) {
