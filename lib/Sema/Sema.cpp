@@ -59,6 +59,7 @@ public:
       case ExprTypes::Integer: return "Integer";
       case ExprTypes::Bool: return "Boolean";
       case ExprTypes::Void: return "Void";
+          case ExprTypes::Vector: return "Vector";
       default: return "Unknown";
     }
   }
@@ -119,6 +120,22 @@ public:
       return;
     }
     if (llvm::isa<Void>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<Vec>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<VecRef>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<VecLen>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<VecSet>(Node)) {
       Node.accept(*this);
       return;
     }
@@ -288,7 +305,7 @@ public:
         E2Type = E1Type;
       }
       if (E1Type == ExprTypes::Unknown || E2Type == ExprTypes::Unknown) {
-        llvm::errs() << "Error: Cannot determine type for read expression\n";
+        llvm::errs() << "Error: Cannot determine type for expressions\n";
         HasError = true;
         setExprType(&Node, ExprTypes::Unknown);
         return;
@@ -601,6 +618,104 @@ public:
     }
     
     setExprType(&Node, ExprTypes::Void);
+  }
+
+  virtual void visit(Vec &Node) override {
+    const std::vector<Expr*> &Elements = Node.getElements();
+    
+    for (Expr *E : Elements) {
+      if (E) {
+        E->accept(*this);
+      }
+    }
+    
+    setExprType(&Node, ExprTypes::Vector);
+  }
+
+  virtual void visit(VecRef &Node) override {
+    Node.getVecExpr()->accept(*this);
+    ExprTypes VecType = getExprType(Node.getVecExpr());
+
+    if (VecType != ExprTypes::Vector) {
+      raiseTypeError(&Node, ExprTypes::Vector, VecType);
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+
+    Node.getIndex()->accept(*this);
+    ExprTypes IndexType = getExprType(Node.getIndex());
+
+    // index type check
+    if (IndexType != ExprTypes::Integer) {
+      raiseTypeError(&Node, ExprTypes::Integer, IndexType);
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+
+    setExprType(&Node, ExprTypes::Unknown);
+
+    if (auto *IndexInt = llvm::dyn_cast<Int>(Node.getIndex())) {
+      int IndexVal = std::stoi(IndexInt->getValue().str());
+
+      if (auto *VecLiteral = llvm::dyn_cast<Vector>(Node.getVecExpr())) {
+        if (IndexVal < 0 || IndexVal >= static_cast<int>(VecLiteral->getLength())) {
+          llvm::errs() << "Error: Vector index " << IndexVal 
+                        << " out of bounds for vector of length " 
+                        << VecLiteral->getLength() << "\n";
+          HasError = true;
+        }
+      }
+    }
+  }
+
+  virtual void visit(VecLen &Node) override {
+    Node.getVecExpr()->accept(*this);
+    ExprTypes VecType = getExprType(Node.getVecExpr());
+
+    if (VecType != ExprTypes::Vector) {
+      raiseTypeError(&Node, ExprTypes::Vector, VecType);
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+    
+    setExprType(&Node, ExprTypes::Integer);
+  }
+
+  virtual void visit(VecSet &Node) override {
+    Node.getVecExpr()->accept(*this);
+    ExprTypes VecType = getExprType(Node.getVecExpr());
+
+    if (VecType != ExprTypes::Vector) {
+      raiseTypeError(&Node, ExprTypes::Vector, VecType);
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+
+    Node.getIndex()->accept(*this);
+    ExprTypes IndexType = getExprType(Node.getIndex());
+    
+    if (IndexType != ExprTypes::Integer) {
+      raiseTypeError(Node.getIndex(), ExprTypes::Integer, IndexType);
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+
+    Node.getValue()->accept(*this);
+    if (auto *IndexInt = llvm::dyn_cast<Int>(Node.getIndex())) {
+      int IndexVal = std::stoi(IndexInt->getValue().str());
+      
+      if (auto *VecLiteral = llvm::dyn_cast<Vec>(Node.getVecExpr())) {
+        if (IndexVal < 0 || IndexVal >= static_cast<int>(VecLiteral->getLength())) {
+          llvm::errs() << "Error: Vector index " << IndexVal 
+                      << " out of bounds for vector of length " 
+                      << VecLiteral->getLength() << "\n";
+          HasError = true;
+        }
+      }
+    }
+
+    ExprTypes ValueType = getExprType(Node.getValue());
+    setExprType(&Node, ValueType);
   }
 };
 } // namespace
