@@ -11,7 +11,8 @@ enum class ExprTypes {
   Unknown,
   Integer,
   Bool,
-  Void
+  Void,
+  Vector
 };
 
 class AST;
@@ -28,6 +29,10 @@ class Set;
 class Begin;
 class While;
 class Void;
+class Vec;
+class VecRef;
+class VecLen;
+class VecSet;
 
 
 class ASTVisitor {
@@ -45,6 +50,10 @@ public:
   virtual void visit(Begin &) {};
   virtual void visit(While &) {};
   virtual void visit(Void &) {};
+  virtual void visit(Vec&) {};
+  virtual void visit(VecRef &) {};
+  virtual void visit(VecLen &) {};
+  virtual void visit(VecSet &) {};
 };
 
 class AST {
@@ -70,7 +79,7 @@ public:
 
 class Expr : public AST {
 public:
-  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf, ExprSet, ExprBegin, ExprWhile, ExprVoid };
+  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf, ExprSet, ExprBegin, ExprWhile, ExprVoid, ExprVec, ExprVecRef, ExprVecLen, ExprVecSet };
 
 private:
   const ExprKind Kind;
@@ -223,6 +232,65 @@ class Void : public Expr {
     virtual void accept(ASTVisitor &V) override { V.visit(*this); }
   
     static bool classof(const Expr *E) { return E->getKind() == ExprVoid; }
+};
+
+class Vec : public Expr {
+  std::vector<Expr*> Elements;
+  size_t Length;
+
+public:
+  Vec(const std::vector<Expr*> &Elements) 
+    : Expr(ExprVec), Elements(Elements), Length(Elements.size()) {};
+  
+  const std::vector<Expr*> &getElements() const { return Elements; };
+  size_t getLength() const { return Length; };
+
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+  static bool classof(const Expr *E) { return E->getKind() == ExprVec; }
+};
+
+class VecRef : public Expr {
+  Expr *VecExpr;
+  Expr *Index;
+
+public:
+  VecRef(Expr *VecExpr, Expr *Index) 
+    : Expr(ExprVecRef), VecExpr(VecExpr), Index(Index) {};
+
+  Expr *getVecExpr() const { return VecExpr; };
+  Expr *getIndex() const { return Index; };
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprVecRef; }
+};
+
+class VecLen : public Expr {
+  Expr *VecExpr;
+
+public:
+  VecLen(Expr *VecExpr) : Expr(ExprVecLen), VecExpr(VecExpr) {};
+
+  Expr *getVecExpr() const { return VecExpr; };
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprVecLen; }
+};
+
+class VecSet : public Expr {
+  Expr *VecExpr;
+  Expr *Index;
+  Expr *Value;
+
+public:
+  VecSet(Expr *VecExpr, Expr *Index, Expr *Value) 
+    : Expr(ExprVecSet), VecExpr(VecExpr), Index(Index), Value(Value) {};
+
+  Expr *getVecExpr() const { return VecExpr; };
+  Expr *getIndex() const { return Index; };
+  Expr *getValue() const { return Value; };
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const Expr *E) { return E->getKind() == ExprVecSet; }
 };
 
 #endif

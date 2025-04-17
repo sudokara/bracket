@@ -56,31 +56,31 @@ Expr *Parser::parseExpr() {
     return new Void();
   }
 
-    // Handle begin expression
-    if (Tok.is(TokenKind::begin)) {
-      advance();
-      
-      std::vector<Expr*> Exprs;
-      
-      // Parse expressions until we see a right parenthesis
-      while (!Tok.is(TokenKind::r_paren)) {
-        Expr *E = parseExpr();
-        if (!E)
-          return ErrorHandler();
-        Exprs.push_back(E);
-      }
-      
-      // Make sure we have at least one expression
-      if (Exprs.empty()) {
-        Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText());
+  // Handle begin expression
+  if (Tok.is(TokenKind::begin)) {
+    advance();
+    
+    std::vector<Expr*> Exprs;
+    
+    // Parse expressions until we see a right parenthesis
+    while (!Tok.is(TokenKind::r_paren)) {
+      Expr *E = parseExpr();
+      if (!E)
         return ErrorHandler();
-      }
-      
-      if (!consume(TokenKind::r_paren))
-        return ErrorHandler(diag::err_no_rparen);
-      
-      return new Begin(Exprs);
+      Exprs.push_back(E);
     }
+    
+    // Make sure we have at least one expression
+    if (Exprs.empty()) {
+      Diags.report(Tok.getLocation(), diag::err_unexpected_token, Tok.getText());
+      return ErrorHandler();
+    }
+    
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+    
+    return new Begin(Exprs);
+  }
   
 
   // Handle set! expression
@@ -264,6 +264,81 @@ Expr *Parser::parseExpr() {
     if (!consume(TokenKind::r_paren))
       return ErrorHandler(diag::err_no_rparen);
     return new Prim(TokenKind::minus, E1, E2); // subtraction
+  }
+
+  // vector creation
+  if (Tok.is(TokenKind::vector)) {
+    advance();
+    
+    std::vector<Expr*> Elements;
+    
+    // Parse expressions until we see a right parenthesis
+    while (!Tok.is(TokenKind::r_paren)) {
+      Expr *E = parseExpr();
+      if (!E)
+        return ErrorHandler();
+      Elements.push_back(E);
+    }
+    
+    // Check for closing parenthesis
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+    
+    return new Vec(Elements);
+  }
+
+  // vector reference
+  if (Tok.is(TokenKind::vector_ref)) {
+    advance();
+    
+    Expr *VecExpr = parseExpr();
+    if (!VecExpr)
+      return ErrorHandler();
+    
+    Expr *IndexExpr = parseExpr();
+    if (!IndexExpr)
+      return ErrorHandler();
+    
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+    
+    return new VecRef(VecExpr, IndexExpr);
+  }
+
+  // vector length
+  if (Tok.is(TokenKind::vector_length)) {
+    advance();
+    
+    Expr *VecExpr = parseExpr();
+    if (!VecExpr)
+      return ErrorHandler();
+    
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+    
+    return new VecLen(VecExpr);
+  }
+
+  // vector set
+  if (Tok.is(TokenKind::vector_set)) {
+    advance();
+    
+    Expr *VecExpr = parseExpr();
+    if (!VecExpr)
+      return ErrorHandler();
+    
+    Expr *IndexExpr = parseExpr();
+    if (!IndexExpr)
+      return ErrorHandler();
+    
+    Expr *ValueExpr = parseExpr();
+    if (!ValueExpr)
+      return ErrorHandler();
+    
+    if (!consume(TokenKind::r_paren))
+      return ErrorHandler(diag::err_no_rparen);
+    
+    return new VecSet(VecExpr, IndexExpr, ValueExpr);
   }
   return ErrorHandler();
 }
