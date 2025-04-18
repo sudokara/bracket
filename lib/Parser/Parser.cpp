@@ -212,7 +212,7 @@ Expr *Parser::parseExpr() {
     if (!Binding)
       return ErrorHandler();
 
-      // (let ([ varname bindingexpr ]
+    // (let ([ varname bindingexpr ]
     // check for the closing square bracket
     if (!consume(TokenKind::r_square))
       return ErrorHandler(diag::err_no_rsquare);
@@ -272,7 +272,7 @@ Expr *Parser::parseExpr() {
     
     std::vector<Expr*> Elements;
     
-    // Parse expressions until we see a right parenthesis
+    // keep parsing for elements till r paren
     while (!Tok.is(TokenKind::r_paren)) {
       Expr *E = parseExpr();
       if (!E)
@@ -280,7 +280,7 @@ Expr *Parser::parseExpr() {
       Elements.push_back(E);
     }
     
-    // Check for closing parenthesis
+    // consume r paren once found
     if (!consume(TokenKind::r_paren))
       return ErrorHandler(diag::err_no_rparen);
     

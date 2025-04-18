@@ -436,13 +436,10 @@ public:
 
     ExprTypes NodeType = getExprType(&Node);
     
-    // Choose the proper type for the PHI node based on the semantic analysis
     Type *PhiType;
     if (NodeType == ExprTypes::Bool) {
-      // If semantic analysis determined this is a Bool expression
       PhiType = BoolTy;
       
-      // Convert values if needed
       if (!ThenV->getType()->isIntegerTy(1)) {
         ThenV = Builder.CreateICmpNE(ThenV, ConstantInt::get(ThenV->getType(), 0), "to_bool");
       }
@@ -450,10 +447,8 @@ public:
         ElseV = Builder.CreateICmpNE(ElseV, ConstantInt::get(ElseV->getType(), 0), "to_bool");
       }
     } else {
-      // If semantic analysis determined this is an Integer expression
       PhiType = Int32Ty;
       
-      // Convert values if needed
       if (ThenV->getType()->isIntegerTy(1)) {
         ThenV = Builder.CreateZExt(ThenV, Int32Ty, "bool_to_int");
       }
@@ -475,32 +470,18 @@ public:
   virtual void visit(Set &Node) override {
     StringRef varName = Node.getVarName();
     
-    // check if variable exists in the scope
     if (nameMap.find(varName) == nameMap.end()) {
       llvm::errs() << "Variable not found during codegen: " << varName << "\n";
       V = UndefValue::get(Int32Ty);
       return;
     }
     
-    // Get the allocated location for the variable
     Value *varPtr = nameMap[varName];
     Type *varType = varPtr->getType();
     
-    // eval the expression to store
     Node.getValue()->accept(*this);
     Value *valueToStore = V;
     Type *valueType = valueToStore->getType();
-    
-    // type conversion if necessary
-    // if (varType->isIntegerTy(1) && valueType->isIntegerTy(32)) {
-    //   // convert int to bool for storing
-    //   valueToStore = Builder.CreateICmpNE(
-    //       valueToStore, ConstantInt::get(Int32Ty, 0), "int_to_bool");
-    // } 
-    // else if (varType->isIntegerTy(32) && valueType->isIntegerTy(1)) {
-    //   // convert bool to int for storing
-    //   valueToStore = Builder.CreateZExt(valueToStore, Int32Ty, "bool_to_int");
-    // }
     
     Builder.CreateStore(valueToStore, varPtr);
     
@@ -528,7 +509,6 @@ public:
   virtual void visit(While &Node) override {
     Function *CurrentFunction = Builder.GetInsertBlock()->getParent();
     
-    // basic blocks
     BasicBlock *LoopCondBB = BasicBlock::Create(M->getContext(), "loop.cond", CurrentFunction);
     BasicBlock *LoopBodyBB = BasicBlock::Create(M->getContext(), "loop.body", CurrentFunction);
     BasicBlock *LoopEndBB = BasicBlock::Create(M->getContext(), "loop.end", CurrentFunction);
@@ -536,25 +516,20 @@ public:
     // branch to loop condition
     Builder.CreateBr(LoopCondBB);
     
-    // emit the condition code
     Builder.SetInsertPoint(LoopCondBB);
     Node.getCondition()->accept(*this);
     Value *CondV = V;
     
-    // ensure the condition is a boolean
     if (!CondV->getType()->isIntegerTy(1)) {
       CondV = Builder.CreateICmpNE(CondV, ConstantInt::get(CondV->getType(), 0), "loopcond");
     }
     
-    // create conditional branch based on the condition
     Builder.CreateCondBr(CondV, LoopBodyBB, LoopEndBB);
     
-    // loop body code
     Builder.SetInsertPoint(LoopBodyBB);
     Node.getBody()->accept(*this);
-    Builder.CreateBr(LoopCondBB);  // loop back to condition
+    Builder.CreateBr(LoopCondBB);
     
-    // continue after the loop
     Builder.SetInsertPoint(LoopEndBB);
     
     V = UndefValue::get(Int32Ty);
@@ -564,12 +539,10 @@ public:
     auto &Elems = Node.getElements();
     unsigned N = Elems.size();
 
-    // 1) build constant length
     Value *len32 = ConstantInt::get(Int32Ty, N);
     Value *lenVal = Builder.CreateZExt(len32, IntPtrTy, "len_ptrsz");
 
 
-    // 2) get or declare malloc
     Function *mallocFn = M->getFunction("malloc");
     if (!mallocFn) {
       FunctionType *mallocTy = FunctionType::get(PtrTy, {IntPtrTy}, false);
@@ -578,7 +551,6 @@ public:
                                   "malloc", M);
     }
 
-    // 3) allocate raw data buffer
     Value *eltSize   = ConstantInt::get(IntPtrTy, sizeof(intptr_t));
     Value *totalSize = Builder.CreateNSWMul(lenVal, eltSize, "vec_bytes");
     Value *rawData   = Builder.CreateCall(mallocFn, { totalSize }, "raw_data");
@@ -586,33 +558,10 @@ public:
                           PointerType::getUnqual(IntPtrTy),
                           "data_ptr");
 
-    // 4) fill in each element
-    // for (unsigned i = 0; i < N; ++i) {
-    //   Elems[i]->accept(*this);
-    //   Value *E = V;
-      
-    //   // Check if this element is a vector
-    //   ExprTypes ElemType = getExprType(Elems[i]);
-      
-    //   // If it's a vector, we need to store its pointer as an integer
-    //   if (ElemType == ExprTypes::Vector) {
-    //     // Convert pointer to integer for storage
-    //     E = Builder.CreatePtrToInt(E, IntPtrTy, "vec_ptr_to_int");
-    //   }
-    //   // If it's a bool, convert to i32
-    //   else if (E->getType()->isIntegerTy(1)) {
-    //     E = Builder.CreateZExt(E, Int32Ty, "bool_to_i32");
-    //   }
-      
-    //   Value *idx = ConstantInt::get(Int32Ty, i);
-    //   Value *gep = Builder.CreateGEP(Int32Ty, dataPtr, idx, "elt_ptr");
-    //   Builder.CreateStore(E, gep);
-    // }
     for (unsigned i = 0; i < N; ++i) {
-      // compute slot address
       Value *idx   = ConstantInt::get(IntPtrTy, i, true);
       Value *slot  = Builder.CreateGEP(IntPtrTy, dataPtr, idx, "slot");
-      // evaluate element
+      
       Expr *E = Node.getElements()[i];
       E->accept(*this);
       Value *v = V;
@@ -626,72 +575,36 @@ public:
       Builder.CreateStore(v, slot);
     }
 
-    // 5) allocate the Vector struct and store length + data pointer
+    // allocate the vector struct and store length + data pointer
     Value *vecPtr = Builder.CreateAlloca(VectorTy, nullptr, "vec");
     Value *lenFld = Builder.CreateStructGEP(VectorTy, vecPtr, 0, "len_addr");
     Builder.CreateStore(lenVal, lenFld);
     Value *dataFld = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
     Builder.CreateStore(dataPtr, dataFld);
 
-    // 6) the result value is the pointer to the vector struct
     V = vecPtr;
   }
 
   virtual void visit(VecLen &Node) override {
-    // 1) evaluate the sub‐expression to get a Vector*
     Node.getVecExpr()->accept(*this);
-    Value *vecPtr = V;            // V is already a Vector*
+    Value *vecPtr = V;
     
-    // 2) if it was a Var, grab the alloca from nameMap
+    // was var, get from namemap
     if (auto *VE = dyn_cast<Var>(Node.getVecExpr())) {
       auto it = nameMap.find(VE->getName());
       assert(it != nameMap.end() && "vector var not in map");
       vecPtr = it->second;        // this is a Vector* alloca
     }
     
-    // 3) GEP to &vecPtr->length (field 0) and load the i32
+    // gep to &vecPtr->length (field 0) and load the i32
     Value *lenAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 0, "len_addr");
     V = Builder.CreateLoad(Int32Ty, lenAddr, "vec_len");
   }
 
   virtual void visit(VecRef &Node) override {
-    // 1) Get the vector expression
+    // Get the vector expression
     Node.getVecExpr()->accept(*this);
     Value *vecPtr = V;
-    
-    // // 2) Get the index
-    // Node.getIndex()->accept(*this);
-    // Value *idx = V;
-    // // Ensure index is i32
-    // if (!idx->getType()->isIntegerTy(32)) {
-    //   idx = Builder.CreateZExt(idx, Int32Ty, "idx_to_i32");
-    // }
-    
-    // // 3) Load the data pointer from the vector
-    // Value *dataAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
-    // Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(Int32Ty), dataAddr);
-    
-    // // 4) Calculate the address of the element
-    // Value *elemPtr = Builder.CreateGEP(Int32Ty, dataPtr, idx, "elem_ptr");
-    
-    // // 5) Load the element value
-    // Value *elemVal = Builder.CreateLoad(Int32Ty, elemPtr, "elem_val");
-    
-    // // 6) Handle the element value based on its type
-    // ExprTypes ElementType = getExprType(&Node);
-    
-    // if (ElementType == ExprTypes::Vector) {
-    //   // If this is a vector reference that returns a vector, 
-    //   // we need to convert the integer back to a vector pointer
-    //   V = Builder.CreateIntToPtr(elemVal, VectorPtrTy, "int_to_vec_ptr");
-    // } else if (ElementType == ExprTypes::Bool) {
-    //   // For boolean, convert to i1
-    //   V = Builder.CreateICmpNE(elemVal, ConstantInt::get(Int32Ty, 0), "to_bool");
-    // } else {
-    //   // For other types (like integers), use the value directly
-    //   V = elemVal;
-    // }
-
 
     // load dataPtr
     Value *dataFld = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
@@ -717,42 +630,38 @@ public:
   }
 
   virtual void visit(VecSet &Node) override {
-    // 1) Evaluate the vector expression to get the vector pointer
     Node.getVecExpr()->accept(*this);
     Value *vecPtr = V;
     
-    // 2) Evaluate the index expression to get the index
     Node.getIndex()->accept(*this);
     Value *idx = V;
-    // Ensure index is i32
+    // ensure index is i32
     if (!idx->getType()->isIntegerTy(32)) {
       idx = Builder.CreateZExt(idx, Int32Ty, "idx_to_i32");
     }
     
-    // 3) Evaluate the value to be stored
     Node.getValue()->accept(*this);
     Value *valueToStore = V;
     
-    // Convert boolean value to i32 if needed (since vectors store i32)
+    // convert boolean value to i32 if needed (since vectors store i32)
     if (valueToStore->getType()->isIntegerTy(1)) {
       valueToStore = Builder.CreateZExt(valueToStore, Int32Ty, "bool_to_i32");
     }
     
-    // 4) Access the data pointer within the vector struct
+    // access the data pointer within the vector struct
     Value *dataAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
     Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(IntPtrTy), dataAddr);
     
-    // 5) Calculate the address of the element to modify (pointer‐sized index)
+    // calculate the address of the element to modify (pointer‐sized index)
     if (!idx->getType()->isIntegerTy(IntPtrTy->getIntegerBitWidth()))
       idx = Builder.CreateZExt(idx, IntPtrTy, "idx_ext");
     Value *slot = Builder.CreateGEP(IntPtrTy, dataPtr, idx, "slot");
     
-    // 6) Extend the stored value to pointer‐size if needed, then store
+    // extend the stored value to pointer‐size if needed, then store
     if (!valueToStore->getType()->isIntegerTy(IntPtrTy->getIntegerBitWidth()))
       valueToStore = Builder.CreateZExt(valueToStore, IntPtrTy, "ext_to_ptrsz");
     Builder.CreateStore(valueToStore, slot);
     
-    // 7) VecSet returns void
     V = UndefValue::get(Int32Ty);
   }
 };

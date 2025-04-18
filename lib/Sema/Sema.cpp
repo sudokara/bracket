@@ -314,6 +314,7 @@ public:
         return;
       }
 
+      // vector equality is also handled here
       if (E1Type != E2Type) {
         raiseTypeError(&Node, E1Type, E2Type);
         setExprType(&Node, ExprTypes::Unknown);
@@ -654,6 +655,8 @@ public:
     if (VecExpr) {
       VecExpr->accept(*this);
       
+      // case 1: VecExpr is a variable
+      // here we can access the vector using the variable name
       if (auto *VarVecExpr = llvm::dyn_cast<Var>(VecExpr)) {
         if (Vectors.count(VarVecExpr->getName())) {
           setExprType(&Node, ExprTypes::Integer);
@@ -665,6 +668,8 @@ public:
           return;
         }
       } else if (auto *VecVecExpr = llvm::dyn_cast<Vec>(VecExpr)) {
+        // case 2: VecExpr is a direct vector
+        // here we just check type validity using dynamic casting
         setExprType(&Node, ExprTypes::Integer);
         return;
       } else {
@@ -696,7 +701,7 @@ public:
       return;
     }
   
-    // Check vector expression type
+    // vector expression type check
     VecExpr->accept(*this);
     ExprTypes VecExprType = getExprType(VecExpr);
     if (VecExprType != ExprTypes::Vector && VecExprType != ExprTypes::Unknown) {
@@ -705,7 +710,7 @@ public:
       return;
     }
   
-    // Check that index is an integer
+    // ensuring index is an int
     IndexExpr->accept(*this);
     ExprTypes IndexType = getExprType(IndexExpr);
     if (IndexType != ExprTypes::Integer) {
@@ -714,7 +719,9 @@ public:
       return;
     }
     
-    // We require literal indices for static type checking
+    // dynamic typecasting to int literal
+    // this is done to make sure that we have actual integers and not read/expressions to be evaluated
+    // this is from the clarification by the TA
     auto *IndexInt = llvm::dyn_cast<Int>(IndexExpr);
     if (!IndexInt) {
       llvm::errs() << "Error: Vector index must be a compile-time constant for static type checking\n";
@@ -723,7 +730,6 @@ public:
       return;
     }
     
-    // Get the actual index value
     int IndexValue = 0;
     if (IndexInt->getValue().getAsInteger(10, IndexValue)) {
       llvm::errs() << "Error: Invalid integer index in vector reference\n";
@@ -735,7 +741,7 @@ public:
     // resolve the Vec AST that this VecRef indexes
     Vec *ResolvedVector = resolveVectorExpr(VecExpr);
     if (!ResolvedVector) {
-      // Error already reported
+      // error already reported from resolveVectorExpr
       setExprType(&Node, ExprTypes::Unknown);
       return;
     }
@@ -756,7 +762,7 @@ public:
       return;
     }
 
-    // if that element is itself a Vec, map this VecRef → that Vec AST
+    // if that element is itself a Vec, map this VecRef -> that Vec AST
     if (auto *ElemVec = llvm::dyn_cast<Vec>(Element))
       VecRefToVec[&Node] = ElemVec;
 
@@ -766,51 +772,47 @@ public:
 
   Vec* resolveVectorExpr(Expr* VecExpr) {
     if (auto *VarExpr = llvm::dyn_cast<Var>(VecExpr)) {
-      // Case 1: VecExpr is a variable
+      // case 1: VecExpr is a variable
       if (!Vectors.count(VarExpr->getName())) {
-        return nullptr; // Variable not found or not a vector
+        return nullptr;
       }
       return Vectors[VarExpr->getName()];
     } 
     else if (auto *VecNode = llvm::dyn_cast<Vec>(VecExpr)) {
-      // Case 2: VecExpr is a direct vector
+      // case 2: VecExpr is a direct vector
       return VecNode;
     } 
     else if (auto *VecRefExpr = llvm::dyn_cast<VecRef>(VecExpr)) {
-      // Case 3: VecExpr is a vector reference - recursive case
+      // case 3: VecExpr is a vector reference - recursive case
       if (VecRefToVec.count(VecRefExpr)) {
-        return VecRefToVec[VecRefExpr]; // Return the mapped Vec
+        return VecRefToVec[VecRefExpr];
       }
       
-      // Resolve inner vector
+      // inner vector resolution
       Vec* InnerVector = resolveVectorExpr(VecRefExpr->getVecExpr());
       if (!InnerVector) return nullptr;
       
-      // Handle constant index only
+      // ensuring int literal and not read/expressions to be evaluated
       auto *InnerIndexInt = llvm::dyn_cast<Int>(VecRefExpr->getIndex());
       if (!InnerIndexInt) return nullptr;
       
-      // Get the integer value
       int InnerIndexValue;
       if (InnerIndexInt->getValue().getAsInteger(10, InnerIndexValue)) 
         return nullptr;
       
-      // Check bounds
       if (InnerIndexValue < 0 || (size_t)InnerIndexValue >= InnerVector->getLength()) 
         return nullptr;
       
-      // Get the element at the index
       Expr *Element = InnerVector->getElements()[InnerIndexValue];
       if (!Element) return nullptr;
       
-      // The element must be a vector itself
       auto *VecElement = llvm::dyn_cast<Vec>(Element);
       if (!VecElement) return nullptr;
       
       return VecElement;
     } 
     else {
-      // Not a vector expression
+      // not a vector expression
       return nullptr;
     }
   }
@@ -820,7 +822,6 @@ public:
     Expr *IndexExpr = Node.getIndex();
     Expr *ValueExpr = Node.getValue();
     
-    // Check if all required expressions are present
     if (!VecExpr) {
       llvm::errs() << "Error: Missing vector expression in vector-set!\n";
       HasError = true;
@@ -842,7 +843,6 @@ public:
       return;
     }
     
-    // Check vector expression type
     VecExpr->accept(*this);
     ExprTypes VecExprType = getExprType(VecExpr);
     if (VecExprType != ExprTypes::Vector && VecExprType != ExprTypes::Unknown) {
@@ -851,7 +851,6 @@ public:
       return;
     }
     
-    // Check index type
     IndexExpr->accept(*this);
     ExprTypes IndexType = getExprType(IndexExpr);
     if (IndexType != ExprTypes::Integer) {
@@ -860,15 +859,13 @@ public:
       return;
     }
     
-    // Process the value expression
     ValueExpr->accept(*this);
     ExprTypes ValueType = getExprType(ValueExpr);
     
-    // Try to resolve the vector and check bounds
     Vec *ResolvedVector = resolveVectorExpr(VecExpr);
     
     if (ResolvedVector) {
-      // Try to get numeric index value for static bounds checking
+      // static index value for bounds checking
       auto *IndexInt = llvm::dyn_cast<Int>(IndexExpr);
       if (IndexInt) {
         int IndexValue;
@@ -880,10 +877,9 @@ public:
             return;
           }
           
-          // Update the type of the element in our tracking data
+          // update elem type
           Expr *OldElement = ResolvedVector->getElements()[IndexValue];
           if (OldElement) {
-            // This is key for correct aliasing: updating the element type directly
             setExprType(OldElement, ValueType);
           }
         }
