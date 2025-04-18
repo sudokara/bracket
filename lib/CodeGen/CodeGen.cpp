@@ -14,7 +14,10 @@ class ToIRVisitor : public ASTVisitor {
   Type *VoidTy;
   Type *Int32Ty;
   Type *BoolTy;
+  Type *VectorTy;
+  Type *VectorPtrTy;
   PointerType *PtrTy;
+  Type *IntPtrTy;
   Constant *Int32Zero;
   Value *V;
   StringMap<Value *> nameMap;
@@ -27,7 +30,10 @@ public:
     Int32Ty = Type::getInt32Ty(M->getContext());
     BoolTy = Type::getInt1Ty(M->getContext()); // i1 is 1 bit integer
     PtrTy = PointerType::getUnqual(M->getContext());
+    VectorTy = StructType::create(M->getContext(), {Int32Ty, PtrTy}, "Vector"); // length and data
+    VectorPtrTy = PointerType::getUnqual(VectorTy); // pointer to vector
     Int32Zero = ConstantInt::get(Int32Ty, 0, true);
+    IntPtrTy = M->getDataLayout().getIntPtrType(M->getContext());
   }
 
   ExprTypes getExprType(const Expr* E) {
@@ -141,6 +147,22 @@ public:
       Node.accept(*this);
       return;
     }
+    if (llvm::isa<Vec>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<VecRef>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<VecLen>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<VecSet>(Node)) {
+      Node.accept(*this);
+      return;
+    }
   };
 
   // instead of just checking validity it also generates LLVM IR
@@ -199,7 +221,27 @@ public:
       Value *E2 = V;
 
       if (Op == tok::eq) {
-        V = Builder.CreateICmpEQ(E1, E2, "eq");
+        // V = Builder.CreateICmpEQ(E1, E2, "eq");
+        // return;
+
+        Node.getE1()->accept(*this);
+        Value *E1 = V;
+        Node.getE2()->accept(*this);
+        Value *E2 = V;
+        
+        ExprTypes E1Type = getExprType(Node.getE1());
+        ExprTypes E2Type = getExprType(Node.getE2());
+        
+        // Special case for vectors - compare pointers directly
+        if (E1Type == ExprTypes::Vector || E2Type == ExprTypes::Vector) {
+          // Convert pointers to integers for comparison
+          Value *E1Int = Builder.CreatePtrToInt(E1, IntPtrTy, "ptr_to_int");
+          Value *E2Int = Builder.CreatePtrToInt(E2, IntPtrTy, "ptr_to_int");
+          V = Builder.CreateICmpEQ(E1Int, E2Int, "ptr_eq");
+        } else {
+          // Regular eq? for non-vector types
+          V = Builder.CreateICmpEQ(E1, E2, "eq");
+        }
         return;
       }
 
@@ -279,35 +321,29 @@ public:
   };
 
   virtual void visit(Var &Node) override {
-    StringRef varName = Node.getName();
-    if (nameMap.find(varName) == nameMap.end()) {
-      // variable not found, sema should have caught
-      // but ill just assume the variable to be 0 to continue compilation?
-      // TODO: how do i do a blocking error?
-      llvm::errs() << "Variable not found: " << varName << "\n";
-      V = ConstantInt::get(Int32Ty, 0, true);
+    auto name = Node.getName();
+    auto it = nameMap.find(name);
+    if (it == nameMap.end()) {
+      llvm::errs() << "Error: Variable " << name << " is not defined\n";
+      
+      return;
+    }
+    Value *varPtr = it->second;      // this is an AllocaInst*
+
+    ExprTypes T = getExprType(&Node);
+    if (T == ExprTypes::Vector) {
+      // vector variables are already pointers to VectorTy on the stack:
+      V = varPtr;
       return;
     }
 
-    Value *varPtr = nameMap[varName];
-    Type *varType = varPtr->getType();
-    // get the type of the var from program info expression type map
-    ExprTypes varTypeEnum = getExprType(&Node);
-    if (varTypeEnum == ExprTypes::Bool) {
-      // if the variable is a boolean, load it as a boolean
-      V = Builder.CreateLoad(BoolTy, varPtr, varName + "_val");
+    // fall back to old behavior for ints/bools
+    if (T == ExprTypes::Bool) {
+      V = Builder.CreateLoad(BoolTy, varPtr, name + "_val");
     } else {
-      // otherwise load it as an integer
-      V = Builder.CreateLoad(Int32Ty, varPtr, varName + "_val");
+      V = Builder.CreateLoad(Int32Ty, varPtr, name + "_val");
     }
-
-    // if (varType->isIntegerTy(1)) {
-    //   V = Builder.CreateLoad(BoolTy, varPtr, varName + "_val");
-    // }
-    // else {
-    //   V = Builder.CreateLoad(Int32Ty, varPtr, varName + "_val");
-    // }
-  };
+  }
 
   virtual void visit(Let &Node) override { 
     StringRef varName = Node.getVarName();
@@ -327,27 +363,31 @@ public:
     ExprTypes bindingExprType = getExprType(Node.getBinding());
     
     // assign this variable through an alloca
-    AllocaInst *variableAlloc = nullptr;
-    if (bindingExprType == ExprTypes::Bool || bindingType->isIntegerTy(1)) {
-        // Always use BoolTy for boolean expressions
-        variableAlloc = Builder.CreateAlloca(BoolTy, nullptr, varName);
-        
-        // If the binding value is not already a boolean, convert it
-        // if (!bindingType->isIntegerTy(1)) {
-        //     bindingVal = Builder.CreateICmpNE(bindingVal, 
-        //                                      ConstantInt::get(bindingType, 0), 
-        //                                      "to_bool");
-        // }
+    if (bindingExprType == ExprTypes::Vector) {
+      nameMap[varName] = bindingVal;
     } else {
-        variableAlloc = Builder.CreateAlloca(Int32Ty, nullptr, varName);
-        
-        // If the binding value is a boolean, convert it to integer
-        // if (bindingType->isIntegerTy(1)) {
-        //     bindingVal = Builder.CreateZExt(bindingVal, Int32Ty, "bool_to_int");
-        // }
+      AllocaInst *variableAlloc = nullptr;
+      if (bindingExprType == ExprTypes::Bool || bindingType->isIntegerTy(1)) {
+          // Always use BoolTy for boolean expressions
+          variableAlloc = Builder.CreateAlloca(BoolTy, nullptr, varName);
+          
+          // If the binding value is not already a boolean, convert it
+          // if (!bindingType->isIntegerTy(1)) {
+          //     bindingVal = Builder.CreateICmpNE(bindingVal, 
+          //                                      ConstantInt::get(bindingType, 0), 
+          //                                      "to_bool");
+          // }
+      } else {
+          variableAlloc = Builder.CreateAlloca(Int32Ty, nullptr, varName);
+          
+          // If the binding value is a boolean, convert it to integer
+          // if (bindingType->isIntegerTy(1)) {
+          //     bindingVal = Builder.CreateZExt(bindingVal, Int32Ty, "bool_to_int");
+          // }
+      }
+      Builder.CreateStore(bindingVal, variableAlloc);
+      nameMap[varName] = variableAlloc;
     }
-    Builder.CreateStore(bindingVal, variableAlloc);
-    nameMap[varName] = variableAlloc;
 
     // accept the body
     Node.getBody()->accept(*this);
@@ -520,6 +560,135 @@ public:
     V = UndefValue::get(Int32Ty);
   }
 
+  virtual void visit(Vec &Node) override {
+    auto &Elems = Node.getElements();
+    unsigned N = Elems.size();
+
+    // 1) build constant length
+    Value *lenVal = ConstantInt::get(Int32Ty, N);
+
+    // 2) get or declare malloc
+    Function *mallocFn = M->getFunction("malloc");
+    if (!mallocFn) {
+      FunctionType *mallocTy = FunctionType::get(PtrTy, {Int32Ty}, false);
+      mallocFn = Function::Create(mallocTy,
+                                  GlobalValue::ExternalLinkage,
+                                  "malloc", M);
+    }
+
+    // 3) allocate raw data buffer
+    Value *eltSize   = ConstantInt::get(Int32Ty, sizeof(int32_t));
+    Value *totalSize = Builder.CreateNSWMul(lenVal, eltSize, "vec_bytes");
+    Value *rawData   = Builder.CreateCall(mallocFn, { totalSize }, "raw_data");
+    Value *dataPtr   = Builder.CreateBitCast(rawData,
+                                PointerType::getUnqual(Int32Ty),
+                                "data_ptr");
+
+    // 4) fill in each element
+    for (unsigned i = 0; i < N; ++i) {
+      Elems[i]->accept(*this);
+      Value *E = V;
+      // if it's a bool (i1), zext to i32
+      if (E->getType()->isIntegerTy(1))
+        E = Builder.CreateZExt(E, Int32Ty, "bool_to_i32");
+      Value *idx = ConstantInt::get(Int32Ty, i);
+      Value *gep = Builder.CreateGEP(Int32Ty, dataPtr, idx, "elt_ptr");
+      Builder.CreateStore(E, gep);
+    }
+
+    // 5) allocate the Vector struct and store length + data pointer
+    Value *vecPtr = Builder.CreateAlloca(VectorTy, nullptr, "vec");
+    Value *lenFld = Builder.CreateStructGEP(VectorTy, vecPtr, 0, "len_addr");
+    Builder.CreateStore(lenVal, lenFld);
+    Value *dataFld = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
+    Builder.CreateStore(dataPtr, dataFld);
+
+    // 6) the result value is the pointer to the vector struct
+    V = vecPtr;
+  }
+
+  virtual void visit(VecLen &Node) override {
+    // 1) evaluate the sub‐expression to get a Vector*
+    Node.getVecExpr()->accept(*this);
+    Value *vecPtr = V;            // V is already a Vector*
+    
+    // 2) if it was a Var, grab the alloca from nameMap
+    if (auto *VE = dyn_cast<Var>(Node.getVecExpr())) {
+      auto it = nameMap.find(VE->getName());
+      assert(it != nameMap.end() && "vector var not in map");
+      vecPtr = it->second;        // this is a Vector* alloca
+    }
+    
+    // 3) GEP to &vecPtr->length (field 0) and load the i32
+    Value *lenAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 0, "len_addr");
+    V = Builder.CreateLoad(Int32Ty, lenAddr, "vec_len");
+  }
+
+  virtual void visit(VecRef &Node) override {
+    // 1) Get the vector expression
+    Node.getVecExpr()->accept(*this);
+    Value *vecPtr = V;
+    
+    // 2) Get the index
+    Node.getIndex()->accept(*this);
+    Value *idx = V;
+    // Ensure index is i32
+    if (!idx->getType()->isIntegerTy(32)) {
+      idx = Builder.CreateZExt(idx, Int32Ty, "idx_to_i32");
+    }
+    
+    // 3) Load the data pointer from the vector
+    Value *dataAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
+    Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(Int32Ty), dataAddr);
+    
+    // 4) Calculate the address of the element
+    Value *elemPtr = Builder.CreateGEP(Int32Ty, dataPtr, idx, "elem_ptr");
+    
+    // 5) Load the element
+    V = Builder.CreateLoad(Int32Ty, elemPtr, "elem_val");
+    
+    // 6) If element should be a boolean, convert it
+    ExprTypes ElementType = getExprType(&Node);
+    if (ElementType == ExprTypes::Bool) {
+      V = Builder.CreateICmpNE(V, ConstantInt::get(Int32Ty, 0), "to_bool");
+    }
+  }
+
+  virtual void visit(VecSet &Node) override {
+    // 1) Evaluate the vector expression to get the vector pointer
+    Node.getVecExpr()->accept(*this);
+    Value *vecPtr = V;
+    
+    // 2) Evaluate the index expression to get the index
+    Node.getIndex()->accept(*this);
+    Value *idx = V;
+    // Ensure index is i32
+    if (!idx->getType()->isIntegerTy(32)) {
+      idx = Builder.CreateZExt(idx, Int32Ty, "idx_to_i32");
+    }
+    
+    // 3) Evaluate the value to be stored
+    Node.getValue()->accept(*this);
+    Value *valueToStore = V;
+    
+    // Convert boolean value to i32 if needed (since vectors store i32)
+    if (valueToStore->getType()->isIntegerTy(1)) {
+      valueToStore = Builder.CreateZExt(valueToStore, Int32Ty, "bool_to_i32");
+    }
+    
+    // 4) Access the data pointer within the vector struct
+    Value *dataAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
+    Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(Int32Ty), dataAddr);
+    
+    // 5) Calculate the address of the element to modify
+    Value *elemPtr = Builder.CreateGEP(Int32Ty, dataPtr, idx, "elem_ptr");
+    
+    // 6) Store the new value
+    Builder.CreateStore(valueToStore, elemPtr);
+    
+    // 7) VecSet returns void
+    V = UndefValue::get(Int32Ty);
+  }
 };
 }; // namespace
 

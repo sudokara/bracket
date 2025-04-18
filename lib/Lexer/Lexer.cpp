@@ -59,7 +59,7 @@ void Lexer::next(Token &token) {
     formToken(token, End, TokenKind::integer_literal); // construct the integer literal from the string
     return;
   }
-  if (charinfo::isLetter(*BufferPtr)) {
+  if (charinfo::isLetter(*BufferPtr) || *BufferPtr == '_') {
     const char *End = BufferPtr + 1;
     while (charinfo::isAlphanumeric_special(*End))
       ++End;

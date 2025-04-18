@@ -7,7 +7,9 @@ class ProgramCheck : public ASTVisitor {
   bool HasError;
   llvm::StringSet<> ScopedVariables;
   StringMap <ExprTypes> VariableTypes;
+  StringMap <Vec*> Vectors;
   DenseMap <const Expr*, ExprTypes> ExpressionTypes;
+  DenseMap <const VecRef*, Vec*> VecRefToVec;
   Program *RootProgram;
 
 public:
@@ -59,7 +61,7 @@ public:
       case ExprTypes::Integer: return "Integer";
       case ExprTypes::Bool: return "Boolean";
       case ExprTypes::Void: return "Void";
-          case ExprTypes::Vector: return "Vector";
+      case ExprTypes::Vector: return "Vector";
       default: return "Unknown";
     }
   }
@@ -304,6 +306,7 @@ public:
         setExprType(E2Prim, E1Type);
         E2Type = E1Type;
       }
+
       if (E1Type == ExprTypes::Unknown || E2Type == ExprTypes::Unknown) {
         llvm::errs() << "Error: Cannot determine type for expressions\n";
         HasError = true;
@@ -429,11 +432,16 @@ public:
     }
 
     ExprTypes BindingType = getExprType(Node.getBinding()), oldType = ExprTypes::Unknown;
+    Vec *oldVector = nullptr;
     bool shadowed = ScopedVariables.count(Node.getVarName()); // true if a variable of same name was defined previously
-    if (shadowed)
+    if (shadowed) {
       oldType = VariableTypes[Node.getVarName()]; // store the old type if the variable is shadowed
-
+      oldVector = Vectors[Node.getVarName()]; // store the old vector if the variable is shadowed
+    }
     ScopedVariables.insert(Node.getVarName()); // add the variable to the scope
+    if (BindingType == ExprTypes::Vector) {
+      Vectors[Node.getVarName()] = llvm::dyn_cast<Vec>(Node.getBinding());
+    }
     VariableTypes[Node.getVarName()] = BindingType; // set the type of the variable
 
     if (Node.getBody())
@@ -445,9 +453,13 @@ public:
     // remove this from the scope after the body expression is checked
     if (!shadowed) {
       ScopedVariables.erase(Node.getVarName()); // remove the variable from the scope 
+      if (BindingType == ExprTypes::Vector) {
+        Vectors.erase(Node.getVarName());
+      }
       VariableTypes.erase(Node.getVarName()); // remove the type of the variable
     } else {
       VariableTypes[Node.getVarName()] = oldType; // restore the old type if the variable was shadowed
+      Vectors[Node.getVarName()] = oldVector; // restore the old vector if the variable was shadowed
     }
   }
 
@@ -466,6 +478,12 @@ public:
     }
 
     CondType = getExprType(Node.getCondition());
+    if (CondType == ExprTypes::Unknown) {
+      if (auto *VecRefExpr = llvm::dyn_cast<VecRef>(Node.getCondition())) {
+        setExprType(VecRefExpr, ExprTypes::Bool);
+        CondType = ExprTypes::Bool;
+      }
+    }
     if (CondType != ExprTypes::Bool) {
       raiseTypeError(&Node, ExprTypes::Bool, CondType);
       return;
@@ -501,7 +519,7 @@ public:
       auto *ElsePrim = llvm::dyn_cast<::Prim>(Node.getElseExpr());
       if (ThenPrim && ThenPrim->getOp() == tok::read && 
           ElsePrim && ElsePrim->getOp() == tok::read) {
-        llvm::errs() << "Error: Cannot determine type for read expression\n";
+        llvm::errs() << "Error: Cannot determine type, both unknown\n";
         HasError = true;
         setExprType(&Node, ExprTypes::Unknown);
         return;
@@ -621,101 +639,393 @@ public:
   }
 
   virtual void visit(Vec &Node) override {
-    const std::vector<Expr*> &Elements = Node.getElements();
-    
-    for (Expr *E : Elements) {
+    for (Expr *E : Node.getElements()) {
       if (E) {
         E->accept(*this);
       }
     }
-    
+
     setExprType(&Node, ExprTypes::Vector);
   }
 
-  virtual void visit(VecRef &Node) override {
-    Node.getVecExpr()->accept(*this);
-    ExprTypes VecType = getExprType(Node.getVecExpr());
+  virtual void visit(VecLen &Node) override {
+    Expr *VecExpr = Node.getVecExpr();
 
-    if (VecType != ExprTypes::Vector) {
-      raiseTypeError(&Node, ExprTypes::Vector, VecType);
-      setExprType(&Node, ExprTypes::Unknown);
-      return;
-    }
-
-    Node.getIndex()->accept(*this);
-    ExprTypes IndexType = getExprType(Node.getIndex());
-
-    // index type check
-    if (IndexType != ExprTypes::Integer) {
-      raiseTypeError(&Node, ExprTypes::Integer, IndexType);
-      setExprType(&Node, ExprTypes::Unknown);
-      return;
-    }
-
-    setExprType(&Node, ExprTypes::Unknown);
-
-    if (auto *IndexInt = llvm::dyn_cast<Int>(Node.getIndex())) {
-      int IndexVal = std::stoi(IndexInt->getValue().str());
-
-      if (auto *VecLiteral = llvm::dyn_cast<Vec>(Node.getVecExpr())) {
-        if (IndexVal < 0 || IndexVal >= static_cast<int>(VecLiteral->getLength())) {
-          llvm::errs() << "Error: Vector index " << IndexVal 
-                        << " out of bounds for vector of length " 
-                        << VecLiteral->getLength() << "\n";
+    if (VecExpr) {
+      VecExpr->accept(*this);
+      
+      if (auto *VarVecExpr = llvm::dyn_cast<Var>(VecExpr)) {
+        if (Vectors.count(VarVecExpr->getName())) {
+          setExprType(&Node, ExprTypes::Integer);
+          return;
+        } else {
+          llvm::errs() << "The requested vector " << VarVecExpr->getName() << " is not defined\n";
           HasError = true;
+          setExprType(&Node, ExprTypes::Unknown);
+          return;
         }
+      } else if (auto *VecVecExpr = llvm::dyn_cast<Vec>(VecExpr)) {
+        setExprType(&Node, ExprTypes::Integer);
+        return;
+      } else {
+        llvm::errs() << "Error: Cannot determine type for vector length expression\n";
+        HasError = true;
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
       }
+    } else {
+      setExprType(&Node, ExprTypes::Unknown);
     }
   }
 
-  virtual void visit(VecLen &Node) override {
-    Node.getVecExpr()->accept(*this);
-    ExprTypes VecType = getExprType(Node.getVecExpr());
+  // virtual void visit(VecRef &Node) override {
+  //   Expr *VecExpr = Node.getVecExpr();
 
-    if (VecType != ExprTypes::Vector) {
-      raiseTypeError(&Node, ExprTypes::Vector, VecType);
+  //   if (VecExpr) {
+  //     VecExpr->accept(*this);
+
+  //     Vec *VectorReferenced = nullptr;
+  //     if (auto *VarVecExpr = llvm::dyn_cast<Var>(VecExpr)) {
+  //       // this is a var node, get the corresponding var name
+  //       if (Vectors.count(VarVecExpr->getName())) {
+  //         VectorReferenced = Vectors[VarVecExpr->getName()];
+  //       } else {
+  //         llvm::errs() << "The requested vector " << VarVecExpr->getName() << " is not defined\n";
+  //         HasError = true;
+  //         setExprType(&Node, ExprTypes::Unknown);
+  //         return;
+  //       }
+  //     } else if (auto *VecVecExpr = llvm::dyn_cast<Vec>(VecExpr)) {
+  //       VectorReferenced = VecVecExpr;
+  //     } else if (auto *VecRefVecExpr = llvm::dyn_cast<VecRef>(VecExpr)) {
+        
+  //     }
+  //     } else {
+  //       llvm::errs() << "Error: Cannot determine type for vector reference expression\n";
+  //       HasError = true;
+  //       setExprType(&Node, ExprTypes::Unknown);
+  //       return;
+  //     }
+
+  //     // check if the index is an integer
+  //     Node.getIndex()->accept(*this);
+  //     ExprTypes IndexType = getExprType(Node.getIndex());
+  //     if (IndexType != ExprTypes::Integer) {
+  //       raiseTypeError(Node.getIndex(), ExprTypes::Integer, IndexType);
+  //       setExprType(&Node, ExprTypes::Unknown);
+  //       return;
+  //     }
+  //     // check if the index is an Int node
+  //     llvm::errs() << "Index type checking successful\n";
+  //     auto *IndexInt = llvm::dyn_cast<Int>(Node.getIndex());
+  //     int IndexValue = 0;
+  //     if (IndexInt) {
+  //       IndexInt->getValue().getAsInteger(10, IndexValue);
+  //       if (IndexValue < 0 || (size_t) IndexValue >= VectorReferenced->getLength()) {
+  //         llvm::errs() << "Error: Index out of bounds for vector reference\n";
+  //         HasError = true;
+  //         setExprType(&Node, ExprTypes::Unknown);
+  //         return;
+  //       }
+  //     }
+
+  //     Expr *IndexedElem = VectorReferenced->getElements()[IndexValue];
+  //     if (IndexedElem) {
+  //       setExprType(&Node, getExprType(IndexedElem));
+  //     } else {
+  //       llvm::errs() << "Error: Cannot determine type for vector reference expression\n";
+  //       HasError = true;
+  //       setExprType(&Node, ExprTypes::Unknown);
+  //       return;
+  //     }
+  //   }
+
+  virtual void visit(VecRef &Node) override {
+    Expr *VecExpr = Node.getVecExpr();
+    Expr *IndexExpr = Node.getIndex();
+  
+    if (!VecExpr) {
+      llvm::errs() << "Error: Missing vector expression in vector reference\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+  
+    if (!IndexExpr) {
+      llvm::errs() << "Error: Missing index in vector reference\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+  
+    // Check vector expression type
+    VecExpr->accept(*this);
+    ExprTypes VecExprType = getExprType(VecExpr);
+    if (VecExprType != ExprTypes::Vector && VecExprType != ExprTypes::Unknown) {
+      raiseTypeError(VecExpr, ExprTypes::Vector, VecExprType);
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+  
+    // Check that index is an integer
+    IndexExpr->accept(*this);
+    ExprTypes IndexType = getExprType(IndexExpr);
+    if (IndexType != ExprTypes::Integer) {
+      raiseTypeError(IndexExpr, ExprTypes::Integer, IndexType);
       setExprType(&Node, ExprTypes::Unknown);
       return;
     }
     
-    setExprType(&Node, ExprTypes::Integer);
+    // We require literal indices for static type checking
+    auto *IndexInt = llvm::dyn_cast<Int>(IndexExpr);
+    if (!IndexInt) {
+      llvm::errs() << "Error: Vector index must be a compile-time constant for static type checking\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+    
+    // Get the actual index value
+    int IndexValue = 0;
+    if (IndexInt->getValue().getAsInteger(10, IndexValue)) {
+      llvm::errs() << "Error: Invalid integer index in vector reference\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+  
+    // Resolve the vector reference
+    Vec *ResolvedVector = resolveVectorExpr(VecExpr);
+    if (!ResolvedVector) {
+      // Error already reported in resolveVectorExpr
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    } else {
+      // Store the mapping for VecRef to Vec
+      VecRefToVec[&Node] = ResolvedVector;
+    }
+  
+    // Check bounds
+    if (IndexValue < 0 || (size_t)IndexValue >= ResolvedVector->getLength()) {
+      llvm::errs() << "Error: Vector index " << IndexValue << " out of bounds [0," 
+                  << ResolvedVector->getLength() - 1 << "]\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+  
+    // Get the element and its type
+    Expr *Element = ResolvedVector->getElements()[IndexValue];
+    if (!Element) {
+      llvm::errs() << "Error: Null element in vector\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+  
+    // Element->accept(*this); // Ensure element has a type
+    ExprTypes ElementType = getExprType(Element);
+    setExprType(&Node, ElementType);
+  }
+  
+  // Helper method to resolve a vector expression to a Vec node
+  /* Vec* resolveVectorExpr(Expr* VecExpr) {
+    if (auto *VarExpr = llvm::dyn_cast<Var>(VecExpr)) {
+      if (!Vectors.count(VarExpr->getName())) {
+        llvm::errs() << "Error: The requested vector " << VarExpr->getName() 
+                    << " is not defined\n";
+        HasError = true;
+        return nullptr;
+      }
+      return Vectors[VarExpr->getName()];
+    } 
+    else if (auto *VecNode = llvm::dyn_cast<Vec>(VecExpr)) {
+      return VecNode;
+    } 
+    else if (auto *VecRefExpr = llvm::dyn_cast<VecRef>(VecExpr)) {
+      // Handle nested vector reference
+      Expr *InnerVecExpr = VecRefExpr->getVecExpr();
+      Expr *InnerIndexExpr = VecRefExpr->getIndex();
+      
+      // We need the inner vector and index to both be resolvable
+      Vec *InnerVector = resolveVectorExpr(InnerVecExpr);
+      if (!InnerVector) {
+        return nullptr; // Error already reported
+      }
+      
+      auto *InnerIndexInt = llvm::dyn_cast<Int>(InnerIndexExpr);
+      if (!InnerIndexInt) {
+        llvm::errs() << "Error: Nested vector index must be a compile-time constant\n";
+        HasError = true;
+        return nullptr;
+      }
+      
+      int InnerIndexValue;
+      if (InnerIndexInt->getValue().getAsInteger(10, InnerIndexValue)) {
+        llvm::errs() << "Error: Invalid integer index in nested vector reference\n";
+        HasError = true;
+        return nullptr;
+      }
+      
+      if (InnerIndexValue < 0 || (size_t)InnerIndexValue >= InnerVector->getLength()) {
+        llvm::errs() << "Error: Vector index " << InnerIndexValue << " out of bounds\n";
+        HasError = true;
+        return nullptr;
+      }
+      
+      Expr *Element = InnerVector->getElements()[InnerIndexValue];
+      if (!Element) {
+        llvm::errs() << "Error: Null element in vector\n";
+        HasError = true;
+        return nullptr;
+      }
+      
+      // The element must itself be a vector
+      auto *VecElement = llvm::dyn_cast<Vec>(Element);
+      if (!VecElement) {
+        llvm::errs() << "Error: Element at index " << InnerIndexValue 
+                    << " is not a vector\n";
+        HasError = true;
+        return nullptr;
+      }
+      
+      return VecElement;
+    } 
+    else {
+      llvm::errs() << "Error: Cannot determine vector for reference expression\n";
+      HasError = true;
+      return nullptr;
+    }
+  } */
+
+  Vec* resolveVectorExpr(Expr* VecExpr) {
+    if (auto *VarExpr = llvm::dyn_cast<Var>(VecExpr)) {
+      // Case 1: VecExpr is a variable
+      if (!Vectors.count(VarExpr->getName())) {
+        return nullptr; // Variable not found or not a vector
+      }
+      return Vectors[VarExpr->getName()];
+    } 
+    else if (auto *VecNode = llvm::dyn_cast<Vec>(VecExpr)) {
+      // Case 2: VecExpr is a direct vector
+      return VecNode;
+    } 
+    else if (auto *VecRefExpr = llvm::dyn_cast<VecRef>(VecExpr)) {
+      // Case 3: VecExpr is a vector reference - recursive case
+      if (VecRefToVec.count(VecRefExpr)) {
+        return VecRefToVec[VecRefExpr]; // Return the mapped Vec
+      }
+      
+      // Resolve inner vector
+      Vec* InnerVector = resolveVectorExpr(VecRefExpr->getVecExpr());
+      if (!InnerVector) return nullptr;
+      
+      // Handle constant index only
+      auto *InnerIndexInt = llvm::dyn_cast<Int>(VecRefExpr->getIndex());
+      if (!InnerIndexInt) return nullptr;
+      
+      // Get the integer value
+      int InnerIndexValue;
+      if (InnerIndexInt->getValue().getAsInteger(10, InnerIndexValue)) 
+        return nullptr;
+      
+      // Check bounds
+      if (InnerIndexValue < 0 || (size_t)InnerIndexValue >= InnerVector->getLength()) 
+        return nullptr;
+      
+      // Get the element at the index
+      Expr *Element = InnerVector->getElements()[InnerIndexValue];
+      if (!Element) return nullptr;
+      
+      // The element must be a vector itself
+      auto *VecElement = llvm::dyn_cast<Vec>(Element);
+      if (!VecElement) return nullptr;
+      
+      return VecElement;
+    } 
+    else {
+      // Not a vector expression
+      return nullptr;
+    }
   }
 
   virtual void visit(VecSet &Node) override {
-    Node.getVecExpr()->accept(*this);
-    ExprTypes VecType = getExprType(Node.getVecExpr());
-
-    if (VecType != ExprTypes::Vector) {
-      raiseTypeError(&Node, ExprTypes::Vector, VecType);
-      setExprType(&Node, ExprTypes::Unknown);
-      return;
-    }
-
-    Node.getIndex()->accept(*this);
-    ExprTypes IndexType = getExprType(Node.getIndex());
+    Expr *VecExpr = Node.getVecExpr();
+    Expr *IndexExpr = Node.getIndex();
+    Expr *ValueExpr = Node.getValue();
     
-    if (IndexType != ExprTypes::Integer) {
-      raiseTypeError(Node.getIndex(), ExprTypes::Integer, IndexType);
+    // Check if all required expressions are present
+    if (!VecExpr) {
+      llvm::errs() << "Error: Missing vector expression in vector-set!\n";
+      HasError = true;
       setExprType(&Node, ExprTypes::Unknown);
       return;
     }
-
-    Node.getValue()->accept(*this);
-    if (auto *IndexInt = llvm::dyn_cast<Int>(Node.getIndex())) {
-      int IndexVal = std::stoi(IndexInt->getValue().str());
-      
-      if (auto *VecLiteral = llvm::dyn_cast<Vec>(Node.getVecExpr())) {
-        if (IndexVal < 0 || IndexVal >= static_cast<int>(VecLiteral->getLength())) {
-          llvm::errs() << "Error: Vector index " << IndexVal 
-                      << " out of bounds for vector of length " 
-                      << VecLiteral->getLength() << "\n";
-          HasError = true;
+    
+    if (!IndexExpr) {
+      llvm::errs() << "Error: Missing index in vector-set!\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+    
+    if (!ValueExpr) {
+      llvm::errs() << "Error: Missing value in vector-set!\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+    
+    // Check vector expression type
+    VecExpr->accept(*this);
+    ExprTypes VecExprType = getExprType(VecExpr);
+    if (VecExprType != ExprTypes::Vector && VecExprType != ExprTypes::Unknown) {
+      raiseTypeError(VecExpr, ExprTypes::Vector, VecExprType);
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+    
+    // Check index type
+    IndexExpr->accept(*this);
+    ExprTypes IndexType = getExprType(IndexExpr);
+    if (IndexType != ExprTypes::Integer) {
+      raiseTypeError(IndexExpr, ExprTypes::Integer, IndexType);
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+    
+    // Process the value expression
+    ValueExpr->accept(*this);
+    ExprTypes ValueType = getExprType(ValueExpr);
+    
+    // Try to resolve the vector and check bounds
+    Vec *ResolvedVector = resolveVectorExpr(VecExpr);
+    
+    if (ResolvedVector) {
+      // Try to get numeric index value for static bounds checking
+      auto *IndexInt = llvm::dyn_cast<Int>(IndexExpr);
+      if (IndexInt) {
+        int IndexValue;
+        if (!IndexInt->getValue().getAsInteger(10, IndexValue)) {
+          if (IndexValue < 0 || (size_t)IndexValue >= ResolvedVector->getLength()) {
+            llvm::errs() << "Error: Index out of bounds for vector-set!\n";
+            HasError = true;
+            setExprType(&Node, ExprTypes::Unknown);
+            return;
+          }
+          
+          // Update the type of the element in our tracking data
+          Expr *OldElement = ResolvedVector->getElements()[IndexValue];
+          if (OldElement) {
+            // This is key for correct aliasing: updating the element type directly
+            setExprType(OldElement, ValueType);
+          }
         }
       }
     }
-
-    ExprTypes ValueType = getExprType(Node.getValue());
-    setExprType(&Node, ValueType);
+    
+    // vector-set! always returns Void
+    setExprType(&Node, ExprTypes::Void);
   }
 };
 } // namespace
