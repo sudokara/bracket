@@ -35,6 +35,11 @@ void Lexer::next(Token &token) {
     return;
   }
 
+  if (*BufferPtr == '-' && *(BufferPtr + 1) &&  *(BufferPtr + 1) == '>') {
+    formToken(token, BufferPtr + 2, TokenKind::arrow);
+    return;
+  }
+
   if (*BufferPtr == '#') {
     if (*(BufferPtr + 1) && *(BufferPtr + 1) == 't') {
       formToken(token, BufferPtr + 2, TokenKind::boolean_literal);
@@ -80,7 +85,12 @@ void Lexer::next(Token &token) {
       {"vector", TokenKind::vector},
       {"vector-ref", TokenKind::vector_ref},
       {"vector-length", TokenKind::vector_length},
-      {"vector-set!", TokenKind::vector_set}
+      {"vector-set!", TokenKind::vector_set},
+      {"define", TokenKind::define},
+      {"Integer", TokenKind::kw_INTEGERTYPE},
+      {"Boolean", TokenKind::kw_BOOLEANTYPE},
+      {"Void", TokenKind::kw_VOIDTYPE},
+      {"Vector", TokenKind::kw_VECTORTYPE},
     });
 
     if (text_map.find(Text) != text_map.end()) {
@@ -122,6 +132,10 @@ void Lexer::next(Token &token) {
     } else {
       formToken(token, BufferPtr + 1, TokenKind::gt);
     }
+    break;
+
+  case ':':
+    formToken(token, BufferPtr + 1, TokenKind::colon);
     break;
 
   default:

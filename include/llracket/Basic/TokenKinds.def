@@ -30,7 +30,9 @@ PUNCTUATOR(vector, "vector")
 PUNCTUATOR(vector_ref, "vector-ref")
 PUNCTUATOR(vector_length, "vector-length") 
 PUNCTUATOR(vector_set, "vector-set!")
-
+PUNCTUATOR(define, "define")
+PUNCTUATOR(colon, ":")
+PUNCTUATOR(arrow, "->")
 
 // comparisons
 PUNCTUATOR(eq, "eq?")
@@ -51,6 +53,10 @@ PUNCTUATOR(logical_not, "not")
 KEYWORD(LET, KEYALL)
 KEYWORD(IF, KEYALL)
 KEYWORD(VOID, KEYALL)
+KEYWORD(VOIDTYPE, KEYALL)
+KEYWORD(INTEGERTYPE, KEYALL)
+KEYWORD(BOOLEANTYPE, KEYALL)
+KEYWORD(VECTORTYPE, KEYALL)
 
 #undef KEYWORD
 #undef PUNCTUATOR
