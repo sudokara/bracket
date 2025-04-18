@@ -1,0 +1,1 @@
+(vector-ref (vector (vector 1)) (+ 0 0))

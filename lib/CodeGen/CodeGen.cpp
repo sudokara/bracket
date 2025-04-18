@@ -565,35 +565,65 @@ public:
     unsigned N = Elems.size();
 
     // 1) build constant length
-    Value *lenVal = ConstantInt::get(Int32Ty, N);
+    Value *len32 = ConstantInt::get(Int32Ty, N);
+    Value *lenVal = Builder.CreateZExt(len32, IntPtrTy, "len_ptrsz");
+
 
     // 2) get or declare malloc
     Function *mallocFn = M->getFunction("malloc");
     if (!mallocFn) {
-      FunctionType *mallocTy = FunctionType::get(PtrTy, {Int32Ty}, false);
+      FunctionType *mallocTy = FunctionType::get(PtrTy, {IntPtrTy}, false);
       mallocFn = Function::Create(mallocTy,
                                   GlobalValue::ExternalLinkage,
                                   "malloc", M);
     }
 
     // 3) allocate raw data buffer
-    Value *eltSize   = ConstantInt::get(Int32Ty, sizeof(int32_t));
+    Value *eltSize   = ConstantInt::get(IntPtrTy, sizeof(intptr_t));
     Value *totalSize = Builder.CreateNSWMul(lenVal, eltSize, "vec_bytes");
     Value *rawData   = Builder.CreateCall(mallocFn, { totalSize }, "raw_data");
     Value *dataPtr   = Builder.CreateBitCast(rawData,
-                                PointerType::getUnqual(Int32Ty),
-                                "data_ptr");
+                          PointerType::getUnqual(IntPtrTy),
+                          "data_ptr");
 
     // 4) fill in each element
+    // for (unsigned i = 0; i < N; ++i) {
+    //   Elems[i]->accept(*this);
+    //   Value *E = V;
+      
+    //   // Check if this element is a vector
+    //   ExprTypes ElemType = getExprType(Elems[i]);
+      
+    //   // If it's a vector, we need to store its pointer as an integer
+    //   if (ElemType == ExprTypes::Vector) {
+    //     // Convert pointer to integer for storage
+    //     E = Builder.CreatePtrToInt(E, IntPtrTy, "vec_ptr_to_int");
+    //   }
+    //   // If it's a bool, convert to i32
+    //   else if (E->getType()->isIntegerTy(1)) {
+    //     E = Builder.CreateZExt(E, Int32Ty, "bool_to_i32");
+    //   }
+      
+    //   Value *idx = ConstantInt::get(Int32Ty, i);
+    //   Value *gep = Builder.CreateGEP(Int32Ty, dataPtr, idx, "elt_ptr");
+    //   Builder.CreateStore(E, gep);
+    // }
     for (unsigned i = 0; i < N; ++i) {
-      Elems[i]->accept(*this);
-      Value *E = V;
-      // if it's a bool (i1), zext to i32
-      if (E->getType()->isIntegerTy(1))
-        E = Builder.CreateZExt(E, Int32Ty, "bool_to_i32");
-      Value *idx = ConstantInt::get(Int32Ty, i);
-      Value *gep = Builder.CreateGEP(Int32Ty, dataPtr, idx, "elt_ptr");
-      Builder.CreateStore(E, gep);
+      // compute slot address
+      Value *idx   = ConstantInt::get(IntPtrTy, i, true);
+      Value *slot  = Builder.CreateGEP(IntPtrTy, dataPtr, idx, "slot");
+      // evaluate element
+      Expr *E = Node.getElements()[i];
+      E->accept(*this);
+      Value *v = V;
+      if (getExprType(E) == ExprTypes::Vector) {
+        v = Builder.CreatePtrToInt(v, IntPtrTy, "vec2int");
+      } else {
+        if (v->getType()->isIntegerTy(1) ||
+            v->getType()->isIntegerTy(32))
+          v = Builder.CreateZExt(v, IntPtrTy, "ext_to_ptrsz");
+      }
+      Builder.CreateStore(v, slot);
     }
 
     // 5) allocate the Vector struct and store length + data pointer
@@ -629,28 +659,60 @@ public:
     Node.getVecExpr()->accept(*this);
     Value *vecPtr = V;
     
-    // 2) Get the index
+    // // 2) Get the index
+    // Node.getIndex()->accept(*this);
+    // Value *idx = V;
+    // // Ensure index is i32
+    // if (!idx->getType()->isIntegerTy(32)) {
+    //   idx = Builder.CreateZExt(idx, Int32Ty, "idx_to_i32");
+    // }
+    
+    // // 3) Load the data pointer from the vector
+    // Value *dataAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
+    // Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(Int32Ty), dataAddr);
+    
+    // // 4) Calculate the address of the element
+    // Value *elemPtr = Builder.CreateGEP(Int32Ty, dataPtr, idx, "elem_ptr");
+    
+    // // 5) Load the element value
+    // Value *elemVal = Builder.CreateLoad(Int32Ty, elemPtr, "elem_val");
+    
+    // // 6) Handle the element value based on its type
+    // ExprTypes ElementType = getExprType(&Node);
+    
+    // if (ElementType == ExprTypes::Vector) {
+    //   // If this is a vector reference that returns a vector, 
+    //   // we need to convert the integer back to a vector pointer
+    //   V = Builder.CreateIntToPtr(elemVal, VectorPtrTy, "int_to_vec_ptr");
+    // } else if (ElementType == ExprTypes::Bool) {
+    //   // For boolean, convert to i1
+    //   V = Builder.CreateICmpNE(elemVal, ConstantInt::get(Int32Ty, 0), "to_bool");
+    // } else {
+    //   // For other types (like integers), use the value directly
+    //   V = elemVal;
+    // }
+
+
+    // load dataPtr
+    Value *dataFld = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
+    Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(IntPtrTy),
+                                        dataFld, "data_ptr");
+    // compute index
     Node.getIndex()->accept(*this);
     Value *idx = V;
-    // Ensure index is i32
-    if (!idx->getType()->isIntegerTy(32)) {
-      idx = Builder.CreateZExt(idx, Int32Ty, "idx_to_i32");
-    }
-    
-    // 3) Load the data pointer from the vector
-    Value *dataAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
-    Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(Int32Ty), dataAddr);
-    
-    // 4) Calculate the address of the element
-    Value *elemPtr = Builder.CreateGEP(Int32Ty, dataPtr, idx, "elem_ptr");
-    
-    // 5) Load the element
-    V = Builder.CreateLoad(Int32Ty, elemPtr, "elem_val");
-    
-    // 6) If element should be a boolean, convert it
-    ExprTypes ElementType = getExprType(&Node);
-    if (ElementType == ExprTypes::Bool) {
-      V = Builder.CreateICmpNE(V, ConstantInt::get(Int32Ty, 0), "to_bool");
+    if (!idx->getType()->isIntegerTy(IntPtrTy->getIntegerBitWidth()))
+      idx = Builder.CreateZExt(idx, IntPtrTy, "idx_ext");
+    // element slot pointer
+    Value *slot = Builder.CreateGEP(IntPtrTy, dataPtr, idx, "slot");
+    // load raw IntPtrTy
+    Value *raw = Builder.CreateLoad(IntPtrTy, slot, "raw_elem");
+    // dispatch by semantic result type
+    if (getExprType(&Node) == ExprTypes::Vector) {
+      V = Builder.CreateIntToPtr(raw, VectorPtrTy, "int2vec");
+    } else if (getExprType(&Node) == ExprTypes::Bool) {
+      V = Builder.CreateTrunc(raw, BoolTy, "raw2bool");
+    } else {
+      V = Builder.CreateTrunc(raw, Int32Ty, "raw2int");
     }
   }
 
@@ -678,13 +740,17 @@ public:
     
     // 4) Access the data pointer within the vector struct
     Value *dataAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
-    Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(Int32Ty), dataAddr);
+    Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(IntPtrTy), dataAddr);
     
-    // 5) Calculate the address of the element to modify
-    Value *elemPtr = Builder.CreateGEP(Int32Ty, dataPtr, idx, "elem_ptr");
+    // 5) Calculate the address of the element to modify (pointer‐sized index)
+    if (!idx->getType()->isIntegerTy(IntPtrTy->getIntegerBitWidth()))
+      idx = Builder.CreateZExt(idx, IntPtrTy, "idx_ext");
+    Value *slot = Builder.CreateGEP(IntPtrTy, dataPtr, idx, "slot");
     
-    // 6) Store the new value
-    Builder.CreateStore(valueToStore, elemPtr);
+    // 6) Extend the stored value to pointer‐size if needed, then store
+    if (!valueToStore->getType()->isIntegerTy(IntPtrTy->getIntegerBitWidth()))
+      valueToStore = Builder.CreateZExt(valueToStore, IntPtrTy, "ext_to_ptrsz");
+    Builder.CreateStore(valueToStore, slot);
     
     // 7) VecSet returns void
     V = UndefValue::get(Int32Ty);
