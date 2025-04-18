@@ -146,6 +146,20 @@ void Lexer::next(Token &token) {
   return;
 }
 
+Token Lexer::peek(unsigned N) {
+  // save current position
+  const char *OldBufferPtr = BufferPtr;
+
+  Token Tok;
+  // consume N+1 tokens into Tok, so peek(0) == next token, peek(1) == token after that, etc.
+  for (unsigned i = 0; i < N; ++i)
+    next(Tok);
+
+  // restore position
+  BufferPtr = OldBufferPtr;
+  return Tok;
+}
+
 void Lexer::formToken(Token &Tok, const char *TokEnd, TokenKind Kind) {
   Tok.Kind = Kind;
   Tok.Text = StringRef(BufferPtr, TokEnd - BufferPtr);

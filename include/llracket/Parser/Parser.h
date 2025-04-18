@@ -40,6 +40,15 @@ class Parser {
     return true;
   }
 
+  bool peekExpect(TokenKind Kind, unsigned N = 1) {
+    Token peekedTok = Lex.peek(N);
+    if (peekedTok.getKind() != Kind) {
+      error(Kind);
+      return false;
+    }
+    return true;
+  }
+
   // check if character is of expected kind and move forward, else error
   bool consume(TokenKind Kind) {
     if (!expect(Kind))
@@ -48,6 +57,8 @@ class Parser {
     return true;
   }
 
+  ParamType* parseType();
+  FunctionDef* parseFunctionDef();
   Expr *parseExpr();
 
 public:

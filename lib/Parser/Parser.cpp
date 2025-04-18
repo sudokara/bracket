@@ -9,10 +9,107 @@ using namespace llracket;
 using tok::TokenKind;
 
 AST *Parser::parse() {
-  Program *P = new Program(parseExpr());
-  AST *Res = llvm::dyn_cast<AST>(P); // program is a subclass of AST so we can do this
+  // function definitions
+  std::vector<FunctionDef*> defs;
+  while (Tok.is(TokenKind::define)
+          || (Tok.is(TokenKind::l_paren) && peekExpect(TokenKind::define))) {
+    defs.push_back(parseFunctionDef());
+  }
+
+  // main expr
+  Expr* E = parseExpr();
   expect(TokenKind::eof);
-  return Res;
+
+  return new Program(defs, E);
+}
+
+FunctionDef* Parser::parseFunctionDef() {
+  // expect '( define ... )'
+  if (!consume(TokenKind::l_paren))
+    Diags.report(Tok.getLocation(), diag::err_no_lparen, Tok.getText());
+  if (!consume(TokenKind::define))
+    Diags.report(Tok.getLocation(), diag::err_expected_define, Tok.getText());
+
+  // expect '( name [params...] )'
+  if (!consume(TokenKind::l_paren))
+    Diags.report(Tok.getLocation(), diag::err_no_lparen, Tok.getText());
+  if (!Tok.is(TokenKind::identifier))
+    Diags.report(Tok.getLocation(), diag::err_expected_identifier, Tok.getText());
+  StringRef fnName = Tok.getText();
+  advance(); // skip name
+
+  // parse zero‐or‐more [param : type]
+  std::vector<std::pair<StringRef,ParamType*>> params;
+  while (Tok.is(TokenKind::l_square)) {
+    advance(); // skip '['
+    if (!Tok.is(TokenKind::identifier))
+      Diags.report(Tok.getLocation(), diag::err_expected_identifier, Tok.getText());
+    StringRef pName = Tok.getText();
+    advance();
+    if (!consume(TokenKind::colon))
+      Diags.report(Tok.getLocation(), diag::err_no_colon, Tok.getText());
+    ParamType* pType = parseType();
+    if (!consume(TokenKind::r_square))
+      Diags.report(Tok.getLocation(), diag::err_no_rsquare, Tok.getText());
+    params.emplace_back(pName,pType);
+  }
+
+  if (!consume(TokenKind::r_paren))
+    Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
+
+  // return type: ':' type
+  if (!consume(TokenKind::colon))
+    Diags.report(Tok.getLocation(), diag::err_no_colon, Tok.getText());
+  ParamType* retTy = parseType();
+
+  // body expression
+  Expr* body = parseExpr();
+
+  if (!consume(TokenKind::r_paren))
+    Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
+
+  return new FunctionDef(fnName, params, retTy, body);
+}
+
+ParamType* Parser::parseType() {
+  // basic names
+  if (Tok.is(TokenKind::kw_INTEGERTYPE)) {
+    advance();
+    return new BasicParamType(ParamType::PK_Integer, "Integer");
+  }
+  if (Tok.is(TokenKind::kw_BOOLEANTYPE)) {
+    advance();
+    return new BasicParamType(ParamType::PK_Boolean, "Boolean");
+  }
+  if (Tok.is(TokenKind::kw_VOIDTYPE)) {
+    advance();
+    return new BasicParamType(ParamType::PK_Void, "Void");
+  }
+
+  // parenthesized type: either Vector or arrow‐type
+  if (consume(TokenKind::l_paren)) {
+    if (Tok.is(TokenKind::kw_VECTORTYPE)) {
+      // Vector type
+      advance();
+      std::vector<ParamType*> elems;
+      while (!Tok.is(TokenKind::r_paren))
+        elems.push_back(parseType());
+      consume(TokenKind::r_paren);
+      return new VectorParamType(elems);
+    }
+    // arrow‐type: ( t1 t2 … -> tr )
+    std::vector<ParamType*> args;
+    while (!Tok.is(TokenKind::arrow) && !Tok.is(TokenKind::eof))
+      args.push_back(parseType());
+    consume(TokenKind::arrow);
+    ParamType* ret = parseType();
+    consume(TokenKind::r_paren);
+    return new FunctionParamType(args, ret);
+  }
+
+  Diags.report(Tok.getLocation(), diag::err_unknown_param_type, Tok.getText());
+  advance();
+  return nullptr;
 }
 
 Expr *Parser::parseExpr() {

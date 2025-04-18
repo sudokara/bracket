@@ -33,6 +33,8 @@ class Vec;
 class VecRef;
 class VecLen;
 class VecSet;
+class FunctionDef;
+class Apply;
 
 
 class ASTVisitor {
@@ -54,6 +56,8 @@ public:
   virtual void visit(VecRef &) {};
   virtual void visit(VecLen &) {};
   virtual void visit(VecSet &) {};
+  virtual void visit(FunctionDef &) {};
+  virtual void visit(Apply &) {};
 };
 
 class AST {
@@ -63,14 +67,19 @@ public:
 };
 
 class Program : public AST {
+  std::vector<FunctionDef *> Defs;
   Expr *E;
   ProgramInfo Info;
 
 public:
   Program(Expr *E) : E(E) {};
+  Program(const std::vector<FunctionDef*>& Defs, Expr *E) : Defs(Defs), E(E) {};
   Program(Expr *E, ProgramInfo Info) : E(E), Info(Info) {};
+  Program(const std::vector<FunctionDef*>& Defs, Expr *E, ProgramInfo Info) 
+    : Defs(Defs), E(E), Info(Info) {};
 
   Expr *getExpr() const { return E; };
+  const std::vector<FunctionDef*>& getFunctionDefs() const { return Defs; }
   ProgramInfo getInfo() const { return Info; };
   void setInfo(ProgramInfo Info) { this->Info = Info; };
 
@@ -79,7 +88,8 @@ public:
 
 class Expr : public AST {
 public:
-  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf, ExprSet, ExprBegin, ExprWhile, ExprVoid, ExprVec, ExprVecRef, ExprVecLen, ExprVecSet };
+  enum ExprKind { ExprPrim, ExprInt, ExprVar, ExprLet, ExprBool, ExprIf, ExprSet, ExprBegin, 
+                  ExprWhile, ExprVoid, ExprVec, ExprVecRef, ExprVecLen, ExprVecSet, ExprApply };
 
 private:
   const ExprKind Kind;
@@ -291,6 +301,105 @@ public:
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
   static bool classof(const Expr *E) { return E->getKind() == ExprVecSet; }
+};
+
+class ParamType {
+public:
+  enum ParamKind {
+    PK_Integer,
+    PK_Boolean,
+    PK_Void,
+    PK_Vector,
+    PK_Function
+  };
+
+private:
+  ParamKind Kind;
+
+public:
+  ParamType(ParamKind Kind) : Kind(Kind) {}
+  virtual ~ParamType() {}
+  
+  ParamKind getKind() const { return Kind; }
+  
+  static bool classof(const ParamType *T) { return true; }
+};
+
+class BasicParamType : public ParamType {
+  StringRef Name;  // "Integer", "Boolean", "Void"
+  
+public:
+  BasicParamType(ParamKind Kind, StringRef Name) : ParamType(Kind), Name(Name) {}
+  StringRef getName() const { return Name; }
+  
+  static bool classof(const ParamType *T) {
+    return T->getKind() == PK_Integer || 
+           T->getKind() == PK_Boolean || 
+           T->getKind() == PK_Void;
+  }
+};
+
+class VectorParamType : public ParamType {
+  std::vector<ParamType*> ElementTypes;
+  
+public:
+  VectorParamType(const std::vector<ParamType*>& ElementTypes) 
+    : ParamType(PK_Vector), ElementTypes(ElementTypes) {}
+    
+  const std::vector<ParamType*>& getElementTypes() const { return ElementTypes; }
+  
+  static bool classof(const ParamType *T) { return T->getKind() == PK_Vector; }
+};
+
+class FunctionParamType : public ParamType {
+  std::vector<ParamType*> ParamTypes;
+  ParamType* ReturnType;
+  
+public:
+  FunctionParamType(const std::vector<ParamType*>& ParamTypes, ParamType* ReturnType)
+    : ParamType(PK_Function), ParamTypes(ParamTypes), ReturnType(ReturnType) {}
+    
+  const std::vector<ParamType*>& getParamTypes() const { return ParamTypes; }
+  ParamType* getReturnType() const { return ReturnType; }
+  
+  static bool classof(const ParamType *T) { return T->getKind() == PK_Function; }
+};
+
+class FunctionDef : public AST {
+  StringRef Name;
+  std::vector<std::pair<StringRef, ParamType*>> Params; // name, type pairs
+  ParamType* ReturnType;
+  Expr* Body;
+
+public:
+  FunctionDef(StringRef Name, 
+              const std::vector<std::pair<StringRef, ParamType*>>& Params,
+              ParamType* ReturnType, 
+              Expr* Body)
+    : Name(Name), Params(Params), ReturnType(ReturnType), Body(Body) {}
+
+  StringRef getName() const { return Name; }
+  const std::vector<std::pair<StringRef, ParamType*>>& getParams() const { return Params; }
+  ParamType* getReturnType() const { return ReturnType; }
+  Expr* getBody() const { return Body; }
+
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+};
+
+class Apply : public Expr {
+  Expr* Function;
+  std::vector<Expr*> Arguments;
+
+public:
+  Apply(Expr* Function, const std::vector<Expr*>& Arguments) 
+    : Expr(ExprApply), Function(Function), Arguments(Arguments) {}
+
+  Expr* getFunction() const { return Function; }
+  const std::vector<Expr*>& getArguments() const { return Arguments; }
+
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+  
+  static bool classof(const Expr *E) { return E->getKind() == ExprApply; }
 };
 
 #endif

@@ -13,4 +13,9 @@ DIAG(err_no_rparen, Error, "Missing closing parenthesis )")
 
 DIAG(err_no_lsquare, Error, "Missing opening square bracket [")
 DIAG(err_no_rsquare, Error, "Missing closing square bracket ]")
+
+DIAG(err_expected_define, Error, "Expected define")
+DIAG(err_no_colon, Error, "Missing colon :")
+DIAG(err_unknown_param_type, Error, "Unknown parameter type")
+
 #undef DIAG
