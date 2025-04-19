@@ -70,8 +70,8 @@ public:
             case ParamType::PK_Integer: params.push_back(Int32Ty);      break;
             case ParamType::PK_Boolean: params.push_back(BoolTy);       break;
             case ParamType::PK_Vector:  params.push_back(VectorPtrTy);  break;
-            case ParamType::PK_Void:    /* void in args? skip */        break;
-            default: params.push_back(Int32Ty);                         break;
+            case ParamType::PK_Function: params.push_back(IntPtrTy);    break;
+            case ParamType::PK_Void:                                    break;
           }
         }
         ParamType *RPT = FD->getReturnType();
@@ -702,21 +702,47 @@ public:
   virtual void visit(VecRef &Node) override {
     // Get the vector expression
     Node.getVecExpr()->accept(*this);
-    Value *vecPtr = V;
+    // Value *vecPtr = V;
 
-    // load dataPtr
-    Value *dataFld = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
-    Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(IntPtrTy),
-                                        dataFld, "data_ptr");
-    // compute index
+    // // load dataPtr
+    // Value *dataFld = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
+    // Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(IntPtrTy),
+    //                                     dataFld, "data_ptr");
+    // // compute index
+    // Node.getIndex()->accept(*this);
+    // Value *idx = V;
+    // if (!idx->getType()->isIntegerTy(IntPtrTy->getIntegerBitWidth()))
+    //   idx = Builder.CreateZExt(idx, IntPtrTy, "idx_ext");
+    // // element slot pointer
+    // Value *slot = Builder.CreateGEP(IntPtrTy, dataPtr, idx, "slot");
+    // // load raw IntPtrTy
+    // Value *raw = Builder.CreateLoad(IntPtrTy, slot, "raw_elem");
+
+    Value *vecPtr;
+    if (auto *VE = dyn_cast<Var>(Node.getVecExpr())) {
+      // vector variable -> was mapped to a Vector* in nameMap
+      vecPtr = nameMap[VE->getName()];
+    } else {
+      // arbitrary expression -> generate code, V must be VectorPtrTy
+      Node.getVecExpr()->accept(*this);
+      vecPtr = V;
+    }
+
+    // 2) now do your GEP on a Vector* (vecPtr) safely
+    Value *dataAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
+    Value *dataPtr  = Builder.CreateLoad(PointerType::getUnqual(IntPtrTy),
+                                        dataAddr, "data_ptr");
+
+    // 3) compute the index slot etc...
     Node.getIndex()->accept(*this);
     Value *idx = V;
     if (!idx->getType()->isIntegerTy(IntPtrTy->getIntegerBitWidth()))
       idx = Builder.CreateZExt(idx, IntPtrTy, "idx_ext");
-    // element slot pointer
+
     Value *slot = Builder.CreateGEP(IntPtrTy, dataPtr, idx, "slot");
-    // load raw IntPtrTy
-    Value *raw = Builder.CreateLoad(IntPtrTy, slot, "raw_elem");
+    Value *raw  = Builder.CreateLoad(IntPtrTy, slot, "raw_elem");
+
+
     // dispatch by semantic result type
     if (getExprType(&Node) == ExprTypes::Vector) {
       V = Builder.CreateIntToPtr(raw, VectorPtrTy, "int2vec");
@@ -789,8 +815,8 @@ public:
         // Handle function pointer based on its type
         Value *funcPtr = funcValue;
         if (funcPtr->getType()->isPointerTy()) {
-            Type *pointeeType = cast<PointerType>(funcPtr->getType())->getElementType();
-            if (pointeeType->isFunctionTy()) {
+            Type *pointeeType = cast<PointerType>(funcPtr->getType());
+            if (llvm::isa<FunctionType>(pointeeType)) {
                 // Already a function pointer, cast to expected type if needed
                 funcPtr = Builder.CreateBitCast(funcPtr, FT->getPointerTo(), "func_ptr_cast");
             } else {

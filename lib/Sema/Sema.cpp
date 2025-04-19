@@ -957,6 +957,7 @@ public:
 
     if (bodyType != returnType) {
       llvm::errs() << "Error: Function " << Node.getName() << " return type mismatch\n";
+      llvm::errs() << "Expected: " << getTypeString(returnType) << ", got: " << getTypeString(bodyType) << "\n";
       HasError = true;
     }
 
@@ -997,6 +998,7 @@ public:
         }
 
         setExprType(&Node, info.returnType);
+        llvm::errs() << "Function " << funcName << " returns type " << getTypeString(info.returnType) << "\n";
         return;
       }
     }
