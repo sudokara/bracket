@@ -390,26 +390,48 @@ public:
 
   virtual void visit(Var &Node) override {
     auto name = Node.getName();
+    
+    // First check if it's a global function (directly by name)
+    auto funcIt = functionPrototypes.find(name);
+    if (funcIt != functionPrototypes.end()) {
+        // It's a function reference, use the function directly
+        V = funcIt->second;
+        return;
+    }
+    
+    // If not a global function, check local variables
     auto it = nameMap.find(name);
     if (it == nameMap.end()) {
-      llvm::errs() << "Error: Variable " << name << " is not defined\n";
-      
-      return;
+        llvm::errs() << "Error: Variable " << name << " is not defined\n";
+        return;
     }
-    Value *varPtr = it->second;      // this is an AllocaInst*
-
+    
+    Value *varPtr = it->second;
     ExprTypes T = getExprType(&Node);
     if (T == ExprTypes::Vector) {
-      // vector variables are already pointers to VectorTy on the stack:
-      V = varPtr;
-      return;
+        // vector variables are already pointers to VectorTy on the stack
+        V = varPtr;
+        return;
+    } else if (T == ExprTypes::Function) {
+        // Function variables (could be parameters or local bindings)
+        if (auto *ArgVal = dyn_cast<Argument>(varPtr)) {
+            // It's a function parameter, use it directly
+            V = ArgVal;
+        } else if (auto *AllocaVal = dyn_cast<AllocaInst>(varPtr)) {
+            // It's a local variable, load the function pointer
+            V = Builder.CreateLoad(PtrTy, AllocaVal, name + "_func");
+        } else {
+            // Otherwise just use the value (might be a function pointer)
+            V = varPtr;
+        }
+        return;
     }
 
-    // fall back to old behavior for ints/bools
+    // Regular variables (Int/Bool)
     if (T == ExprTypes::Bool) {
-      V = Builder.CreateLoad(BoolTy, varPtr, name + "_val");
+        V = Builder.CreateLoad(BoolTy, varPtr, name + "_val");
     } else {
-      V = Builder.CreateLoad(Int32Ty, varPtr, name + "_val");
+        V = Builder.CreateLoad(Int32Ty, varPtr, name + "_val");
     }
   }
 
@@ -613,8 +635,8 @@ public:
 
     Function *mallocFn = M->getFunction("malloc");
     if (!mallocFn) {
-      FunctionType *mallocTy = FunctionType::get(PtrTy, {IntPtrTy}, false);
-      mallocFn = Function::Create(mallocTy,
+        FunctionType *mallocTy = FunctionType::get(PtrTy, {IntPtrTy}, false);
+        mallocFn = Function::Create(mallocTy,
                                   GlobalValue::ExternalLinkage,
                                   "malloc", M);
     }
@@ -627,20 +649,28 @@ public:
                           "data_ptr");
 
     for (unsigned i = 0; i < N; ++i) {
-      Value *idx   = ConstantInt::get(IntPtrTy, i, true);
-      Value *slot  = Builder.CreateGEP(IntPtrTy, dataPtr, idx, "slot");
-      
-      Expr *E = Node.getElements()[i];
-      E->accept(*this);
-      Value *v = V;
-      if (getExprType(E) == ExprTypes::Vector) {
-        v = Builder.CreatePtrToInt(v, IntPtrTy, "vec2int");
-      } else {
-        if (v->getType()->isIntegerTy(1) ||
-            v->getType()->isIntegerTy(32))
-          v = Builder.CreateZExt(v, IntPtrTy, "ext_to_ptrsz");
-      }
-      Builder.CreateStore(v, slot);
+        Value *idx   = ConstantInt::get(IntPtrTy, i, true);
+        Value *slot  = Builder.CreateGEP(IntPtrTy, dataPtr, idx, "slot");
+        
+        Expr *E = Node.getElements()[i];
+        E->accept(*this);
+        Value *v = V;
+        
+        if (getExprType(E) == ExprTypes::Vector) {
+            v = Builder.CreatePtrToInt(v, IntPtrTy, "vec2int");
+        } else if (getExprType(E) == ExprTypes::Function) {
+            // Special handling for function elements in vectors
+            if (auto *VE = llvm::dyn_cast<Var>(E)) {
+                // Store function pointer as integer in the vector
+                Function *F = functionPrototypes[VE->getName()];
+                v = Builder.CreatePtrToInt(F, IntPtrTy, "func2int");
+            }
+        } else {
+            if (v->getType()->isIntegerTy(1) ||
+                v->getType()->isIntegerTy(32))
+              v = Builder.CreateZExt(v, IntPtrTy, "ext_to_ptrsz");
+        }
+        Builder.CreateStore(v, slot);
     }
 
     // allocate the vector struct and store length + data pointer
@@ -692,6 +722,9 @@ public:
       V = Builder.CreateIntToPtr(raw, VectorPtrTy, "int2vec");
     } else if (getExprType(&Node) == ExprTypes::Bool) {
       V = Builder.CreateTrunc(raw, BoolTy, "raw2bool");
+    } else if (getExprType(&Node) == ExprTypes::Function) {
+      // For functions, keep the raw pointer value intact
+      V = raw;
     } else {
       V = Builder.CreateTrunc(raw, Int32Ty, "raw2int");
     }
@@ -734,19 +767,94 @@ public:
   }
 
   virtual void visit(Apply &Node) override {
-    // codegen callee
-    if (auto *VF = llvm::dyn_cast<Var>(Node.getFunction())) {
-      Function *Callee = functionPrototypes[VF->getName()];
-      std::vector<Value*> argsV;
-      for (Expr *E : Node.getArguments()) {
+    // Collect arguments first
+    std::vector<Value*> argsV;
+    for (Expr *E : Node.getArguments()) {
         E->accept(*this);
         argsV.push_back(V);
-      }
-      V = Builder.CreateCall(Callee, argsV, "calltmp");
-    } else {
-      llvm::errs() << "Unsupported non-variable function call\n";
-      V = UndefValue::get(Int32Ty);
     }
+
+    // Get the function to call
+    Node.getFunction()->accept(*this);
+    Value *funcValue = V;
+    
+    if (auto *F = dyn_cast<Function>(funcValue)) {
+        // Direct function call - the function is already a Function* (from functionPrototypes)
+        V = Builder.CreateCall(F, argsV, "calltmp");
+    } else {
+        // Indirect function call through a pointer (function parameter or from vector)
+        std::vector<Type*> argTypes(argsV.size(), Int32Ty);
+        FunctionType *FT = FunctionType::get(Int32Ty, argTypes, false);
+        
+        // Handle function pointer based on its type
+        Value *funcPtr = funcValue;
+        if (funcPtr->getType()->isPointerTy()) {
+            Type *pointeeType = cast<PointerType>(funcPtr->getType())->getElementType();
+            if (pointeeType->isFunctionTy()) {
+                // Already a function pointer, cast to expected type if needed
+                funcPtr = Builder.CreateBitCast(funcPtr, FT->getPointerTo(), "func_ptr_cast");
+            } else {
+                // Not a function pointer, convert to function pointer
+                funcPtr = Builder.CreateIntToPtr(funcPtr, FT->getPointerTo(), "int2func");
+            }
+        } else {
+            // Integer/raw pointer representation, convert to function pointer
+            funcPtr = Builder.CreateIntToPtr(funcPtr, FT->getPointerTo(), "int2func");
+        }
+        
+        // Call through the function pointer
+        V = Builder.CreateCall(FT, funcPtr, argsV, "indirect_call");
+    }
+  }
+
+  virtual void visit(FunctionDef &Node) override {
+    Function *F = functionPrototypes[Node.getName()];
+    auto oldNameMap = nameMap;
+    nameMap.clear();
+
+    // entry block
+    BasicBlock *BB = BasicBlock::Create(M->getContext(),
+                                        Node.getName() + "_entry",
+                                        F);
+    Builder.SetInsertPoint(BB);
+
+    // emit allocas & stores for arguments
+    unsigned idx = 0;
+    for (auto &PP : Node.getParams()) {
+        StringRef name = PP.first;
+        ParamType *paramType = PP.second;
+        Argument *A = F->getArg(idx++);
+        A->setName(name);
+        
+        if (paramType->getKind() == ParamType::PK_Function) {
+            // Function arguments - store the function pointer directly
+            nameMap[name] = A;
+        } else if (A->getType() == VectorPtrTy) {
+            // vector argument: keep it directly
+            nameMap[name] = A;
+        } else {
+            // scalar argument: allocate and store
+            AllocaInst *All = Builder.CreateAlloca(A->getType(), nullptr, name + ".addr");
+            Builder.CreateStore(A, All);
+            nameMap[name] = All;
+        }
+    }
+
+    // codegen the function body
+    Node.getBody()->accept(*this);
+    Value *retVal = V;
+
+    // emit return
+    if (F->getReturnType()->isVoidTy()) {
+        Builder.CreateRetVoid();
+    } else {
+        Builder.CreateRet(retVal);
+    }
+    
+    llvm::verifyFunction(*F, &errs());
+
+    // restore
+    nameMap = oldNameMap;
   }
 };
 }; // namespace
@@ -755,53 +863,3 @@ void CodeGen::compile(AST *Tree) {
   ToIRVisitor ToIR(M);
   ToIR.run(Tree);
 }
-
-The code in #file:CodeGen.cpp is failing few test cases.
-
-For #file:02.rkt, the test logs are:
-```
-Running test: functions_02
-❌ Test failed: functions_02
-Expected output:
-42
-Actual output:
-853565136
-```
-
-For #file:03.rkt , 
-```
-Running test: functions_03
-❌ Test failed: functions_03
-Expected output:
-42
-Actual output:
-719347408
-```
-
-And finally for #file:01.rkt 
-```
-Running test: functions_01
-❌ Step 1 failed (llracket): functions_01
-Stack dump:
-0.      Program arguments: "/Users/sudokara/IIIT/Sem 8/Compilers/compilers-s25-llvm-racket-ping-pong/build/bin/llracket" "/Users/sudokara/IIIT/Sem 8/Compilers/compilers-s25-llvm-racket-ping-pong/tests/functions/01.rkt" -o "/Users/sudokara/IIIT/Sem 8/Compilers/compilers-s25-llvm-racket-ping-pong/build/tests/functions_01.ll"
-Stack dump without symbol names (ensure you have llvm-symbolizer in your PATH or set the environment var `LLVM_SYMBOLIZER_PATH` to point to it):
-0  libLLVM.dylib            0x0000000112482610 llvm::sys::PrintStackTrace(llvm::raw_ostream&, int) + 56
-1  libLLVM.dylib            0x00000001124829fc SignalHandler(int) + 312
-2  libsystem_platform.dylib 0x0000000193c12de4 _sigtramp + 56
-3  llracket                 0x0000000104472e1c llvm::CallInst::CallInst(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::ArrayRef<llvm::OperandBundleDefT<llvm::Value*>>, llvm::Twine const&, llvm::InsertPosition) + 96
-4  llracket                 0x0000000104472cf0 llvm::CallInst::CallInst(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::ArrayRef<llvm::OperandBundleDefT<llvm::Value*>>, llvm::Twine const&, llvm::InsertPosition) + 120
-5  llracket                 0x00000001044729dc llvm::CallInst::Create(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::ArrayRef<llvm::OperandBundleDefT<llvm::Value*>>, llvm::Twine const&, llvm::InsertPosition) + 264
-6  llracket                 0x0000000104472830 llvm::IRBuilderBase::CreateCall(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::Twine const&, llvm::MDNode*) + 168
-7  llracket                 0x0000000104471c40 llvm::IRBuilderBase::CreateCall(llvm::FunctionCallee, llvm::ArrayRef<llvm::Value*>, llvm::Twine const&, llvm::MDNode*) + 120
-8  llracket                 0x0000000104471148 (anonymous namespace)::ToIRVisitor::visit(Apply&) + 392
-9  llracket                 0x0000000104455974 Apply::accept(ASTVisitor&) + 40
-10 llracket                 0x00000001044704bc (anonymous namespace)::ToIRVisitor::visit(Vec&) + 900
-11 llracket                 0x00000001044554c8 Vec::accept(ASTVisitor&) + 40
-12 llracket                 0x000000010446d944 (anonymous namespace)::ToIRVisitor::run(AST*) + 1876
-13 llracket                 0x000000010446d160 CodeGen::compile(AST*) + 72
-14 llracket                 0x000000010443ee30 LLRacket::exec() + 356
-15 llracket                 0x000000010443e8a0 main + 684
-16 dyld                     0x000000019385c274 start + 2840
-```
-
-The testing script is at #file:test_script.py . Fix the problematic code. You can also refer to #file:AST.h #file:Sema.cpp if needed
