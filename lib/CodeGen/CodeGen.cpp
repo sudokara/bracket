@@ -3,6 +3,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -20,7 +21,8 @@ class ToIRVisitor : public ASTVisitor {
   Type *IntPtrTy;
   Constant *Int32Zero;
   Value *V;
-  StringMap<Value *> nameMap;
+  StringMap<Value*> nameMap;
+  StringMap<Function*> functionPrototypes;
   ProgramInfo TypeInfo;
   Program* RootProgram;
 
@@ -53,11 +55,87 @@ public:
     return ExprTypes::Unknown;
   }
 
-  // something was exlpained here. you should see. 
+  // something was explained here. you should see. 
   void run(AST *Tree) {
     if (auto* P = dynamic_cast<Program*>(Tree)) {
       RootProgram = P;
       TypeInfo = P->getInfo();
+
+      for (FunctionDef *FD : P->getFunctionDefs()) {
+        // build the LLVM function prototype
+        std::vector<Type*> params;
+        for (auto &PP : FD->getParams()) {
+          ParamType *PT = PP.second;
+          switch (PT->getKind()) {
+            case ParamType::PK_Integer: params.push_back(Int32Ty);      break;
+            case ParamType::PK_Boolean: params.push_back(BoolTy);       break;
+            case ParamType::PK_Vector:  params.push_back(VectorPtrTy);  break;
+            case ParamType::PK_Void:    /* void in args? skip */        break;
+            default: params.push_back(Int32Ty);                         break;
+          }
+        }
+        ParamType *RPT = FD->getReturnType();
+        Type *retTy = nullptr;
+        switch (RPT->getKind()) {
+          case ParamType::PK_Integer: retTy = Int32Ty;      break;
+          case ParamType::PK_Boolean: retTy = BoolTy;       break;
+          case ParamType::PK_Vector:  retTy = VectorPtrTy;  break;
+          case ParamType::PK_Void:    retTy = VoidTy;       break;
+          default: retTy = Int32Ty;                         break;
+        }
+        FunctionType *FT =
+          FunctionType::get(retTy, params, false);
+        Function *F =
+          Function::Create(FT,
+                           GlobalValue::ExternalLinkage,
+                           FD->getName(),
+                           M);
+        functionPrototypes[FD->getName()] = F;
+      }
+
+      for (FunctionDef *FD : P->getFunctionDefs()) {
+        Function *F = functionPrototypes[FD->getName()];
+        auto oldNameMap = nameMap;
+        nameMap.clear();
+
+        // entry block
+        BasicBlock *BB = BasicBlock::Create(M->getContext(),
+                                            FD->getName() + "_entry",
+                                            F);
+        Builder.SetInsertPoint(BB);
+
+        // emit allocas & stores for arguments
+        unsigned idx = 0;
+        for (auto &PP : FD->getParams()) {
+          StringRef name = PP.first;
+          Argument *A = F->getArg(idx++);
+          A->setName(name);
+          if (A->getType() == VectorPtrTy) {
+            // vector argument: keep it directly
+            nameMap[name] = A;
+          } else {
+            // scalar argument: allocate and store
+            AllocaInst *All = Builder.CreateAlloca(A->getType(), nullptr, name + ".addr");
+            Builder.CreateStore(A, All);
+            nameMap[name] = All;
+          }
+        }
+
+        // codegen the function body
+        FD->getBody()->accept(*this);
+        Value *retVal = V;
+
+        // emit return
+        if (F->getReturnType()->isVoidTy()) {
+          Builder.CreateRetVoid();
+        } else {
+          Builder.CreateRet(retVal);
+        }
+        llvm::verifyFunction(*F, &errs());
+
+        // restore
+        nameMap = oldNameMap;
+      }
     }
 
     FunctionType *MainFty = FunctionType::get(Int32Ty, {Int32Ty, PtrTy}, false);
@@ -67,20 +145,6 @@ public:
     Builder.SetInsertPoint(BB); // builder inserts everything that is called like CreateCall at this insertion point
     Tree->accept(*this);
 
-    // if (V->getType()->isIntegerTy(1)) {
-    //   // boolean (bitwidth 1)
-    //   FunctionType *WriteBoolFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
-    //   Function *WriteBoolFn = Function::Create(
-    //       WriteBoolFnTy, GlobalValue::ExternalLinkage, "write_bool", M);
-    //   Value *ExtendedV = Builder.CreateZExt(V, Int32Ty, "ext_bool");
-    //   Builder.CreateCall(WriteBoolFn, {ExtendedV}); // Remove WriteBoolFnTy
-    // } else {
-    //   // not bool, so int
-    //   FunctionType *WriteIntFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
-    //   Function *WriteIntFn = Function::Create(
-    //       WriteIntFnTy, GlobalValue::ExternalLinkage, "write_int", M);
-    //   Builder.CreateCall(WriteIntFn, {V}); // Remove WriteIntFnTy
-    // }
     ExprTypes resultType = getExprType(dynamic_cast<Program*>(Tree)->getExpr());
 
     if (resultType == ExprTypes::Void) {
@@ -160,6 +224,10 @@ public:
       return;
     }
     if (llvm::isa<VecSet>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<Apply>(Node)) {
       Node.accept(*this);
       return;
     }
@@ -664,6 +732,22 @@ public:
     
     V = UndefValue::get(Int32Ty);
   }
+
+  virtual void visit(Apply &Node) override {
+    // codegen callee
+    if (auto *VF = llvm::dyn_cast<Var>(Node.getFunction())) {
+      Function *Callee = functionPrototypes[VF->getName()];
+      std::vector<Value*> argsV;
+      for (Expr *E : Node.getArguments()) {
+        E->accept(*this);
+        argsV.push_back(V);
+      }
+      V = Builder.CreateCall(Callee, argsV, "calltmp");
+    } else {
+      llvm::errs() << "Unsupported non-variable function call\n";
+      V = UndefValue::get(Int32Ty);
+    }
+  }
 };
 }; // namespace
 
@@ -671,3 +755,53 @@ void CodeGen::compile(AST *Tree) {
   ToIRVisitor ToIR(M);
   ToIR.run(Tree);
 }
+
+The code in #file:CodeGen.cpp is failing few test cases.
+
+For #file:02.rkt, the test logs are:
+```
+Running test: functions_02
+❌ Test failed: functions_02
+Expected output:
+42
+Actual output:
+853565136
+```
+
+For #file:03.rkt , 
+```
+Running test: functions_03
+❌ Test failed: functions_03
+Expected output:
+42
+Actual output:
+719347408
+```
+
+And finally for #file:01.rkt 
+```
+Running test: functions_01
+❌ Step 1 failed (llracket): functions_01
+Stack dump:
+0.      Program arguments: "/Users/sudokara/IIIT/Sem 8/Compilers/compilers-s25-llvm-racket-ping-pong/build/bin/llracket" "/Users/sudokara/IIIT/Sem 8/Compilers/compilers-s25-llvm-racket-ping-pong/tests/functions/01.rkt" -o "/Users/sudokara/IIIT/Sem 8/Compilers/compilers-s25-llvm-racket-ping-pong/build/tests/functions_01.ll"
+Stack dump without symbol names (ensure you have llvm-symbolizer in your PATH or set the environment var `LLVM_SYMBOLIZER_PATH` to point to it):
+0  libLLVM.dylib            0x0000000112482610 llvm::sys::PrintStackTrace(llvm::raw_ostream&, int) + 56
+1  libLLVM.dylib            0x00000001124829fc SignalHandler(int) + 312
+2  libsystem_platform.dylib 0x0000000193c12de4 _sigtramp + 56
+3  llracket                 0x0000000104472e1c llvm::CallInst::CallInst(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::ArrayRef<llvm::OperandBundleDefT<llvm::Value*>>, llvm::Twine const&, llvm::InsertPosition) + 96
+4  llracket                 0x0000000104472cf0 llvm::CallInst::CallInst(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::ArrayRef<llvm::OperandBundleDefT<llvm::Value*>>, llvm::Twine const&, llvm::InsertPosition) + 120
+5  llracket                 0x00000001044729dc llvm::CallInst::Create(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::ArrayRef<llvm::OperandBundleDefT<llvm::Value*>>, llvm::Twine const&, llvm::InsertPosition) + 264
+6  llracket                 0x0000000104472830 llvm::IRBuilderBase::CreateCall(llvm::FunctionType*, llvm::Value*, llvm::ArrayRef<llvm::Value*>, llvm::Twine const&, llvm::MDNode*) + 168
+7  llracket                 0x0000000104471c40 llvm::IRBuilderBase::CreateCall(llvm::FunctionCallee, llvm::ArrayRef<llvm::Value*>, llvm::Twine const&, llvm::MDNode*) + 120
+8  llracket                 0x0000000104471148 (anonymous namespace)::ToIRVisitor::visit(Apply&) + 392
+9  llracket                 0x0000000104455974 Apply::accept(ASTVisitor&) + 40
+10 llracket                 0x00000001044704bc (anonymous namespace)::ToIRVisitor::visit(Vec&) + 900
+11 llracket                 0x00000001044554c8 Vec::accept(ASTVisitor&) + 40
+12 llracket                 0x000000010446d944 (anonymous namespace)::ToIRVisitor::run(AST*) + 1876
+13 llracket                 0x000000010446d160 CodeGen::compile(AST*) + 72
+14 llracket                 0x000000010443ee30 LLRacket::exec() + 356
+15 llracket                 0x000000010443e8a0 main + 684
+16 dyld                     0x000000019385c274 start + 2840
+```
+
+The testing script is at #file:test_script.py . Fix the problematic code. You can also refer to #file:AST.h #file:Sema.cpp if needed
