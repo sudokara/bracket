@@ -4,19 +4,22 @@
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
 #include <vector>
+#include <utility>
 
 using namespace llracket;
 using tok::TokenKind;
 
 AST *Parser::parse() {
-  // function definitions
   std::vector<FunctionDef*> defs;
-  while (Tok.is(TokenKind::define)
-          || (Tok.is(TokenKind::l_paren) && peekExpect(TokenKind::define))) {
-    defs.push_back(parseFunctionDef());
+  while (Tok.is(TokenKind::l_paren) && peekExpect(TokenKind::define, 1)) {
+      FunctionDef* def = parseFunctionDef();
+      if (def) {
+          defs.push_back(def);
+      } else {
+          if (!Tok.is(TokenKind::eof)) advance();
+      }
   }
 
-  // main expr
   Expr* E = parseExpr();
   expect(TokenKind::eof);
 
@@ -24,55 +27,110 @@ AST *Parser::parse() {
 }
 
 FunctionDef* Parser::parseFunctionDef() {
-  // expect '( define ... )'
-  if (!consume(TokenKind::l_paren))
+  llvm::SMLoc DefStartLoc = Tok.getLocation(); // Location of the starting '('
+
+  if (!consume(TokenKind::l_paren)) {
     Diags.report(Tok.getLocation(), diag::err_no_lparen, Tok.getText());
-  if (!consume(TokenKind::define))
+    return nullptr;
+  }
+  if (!consume(TokenKind::define)) {
     Diags.report(Tok.getLocation(), diag::err_expected_define, Tok.getText());
-
-  // expect '( name [params...] )'
-  if (!consume(TokenKind::l_paren))
-    Diags.report(Tok.getLocation(), diag::err_no_lparen, Tok.getText());
-  if (!Tok.is(TokenKind::identifier))
-    Diags.report(Tok.getLocation(), diag::err_expected_identifier, Tok.getText());
-  StringRef fnName = Tok.getText();
-  advance(); // skip name
-
-  // parse zero‐or‐more [param : type]
-  std::vector<std::pair<StringRef,ParamType*>> params;
-  while (Tok.is(TokenKind::l_square)) {
-    advance(); // skip '['
-    if (!Tok.is(TokenKind::identifier))
-      Diags.report(Tok.getLocation(), diag::err_expected_identifier, Tok.getText());
-    StringRef pName = Tok.getText();
-    advance();
-    if (!consume(TokenKind::colon))
-      Diags.report(Tok.getLocation(), diag::err_no_colon, Tok.getText());
-    ParamType* pType = parseType();
-    if (!consume(TokenKind::r_square))
-      Diags.report(Tok.getLocation(), diag::err_no_rsquare, Tok.getText());
-    params.emplace_back(pName,pType);
+    skipUntil(tok::r_paren);
+    if (Tok.is(tok::r_paren)) advance();
+    return nullptr;
   }
 
-  if (!consume(TokenKind::r_paren))
-    Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
+  // Expect '( name [params...] )' for the function signature
+  if (!consume(TokenKind::l_paren)) {
+    Diags.report(Tok.getLocation(), diag::err_no_lparen, Tok.getText());
+    skipUntil(tok::r_paren);
+    if (Tok.is(tok::r_paren)) advance();
+    return nullptr;
+  }
 
-  // return type: ':' type
-  if (!consume(TokenKind::colon))
+  // Function name
+  if (!Tok.is(TokenKind::identifier)) {
+    Diags.report(Tok.getLocation(), diag::err_expected_identifier, Tok.getText());
+    skipUntil(tok::r_paren);
+    if (Tok.is(tok::r_paren)) advance();
+    skipUntil(tok::r_paren);
+    if (Tok.is(tok::r_paren)) advance();
+    return nullptr;
+  }
+  StringRef fnName = Tok.getText();
+  advance();
+
+  // Parse parameters: zero or more [param : type]
+  std::vector<std::pair<StringRef, ParamType*>> params;
+  while (Tok.is(TokenKind::l_square)) {
+    advance();
+    if (!Tok.is(TokenKind::identifier)) {
+      Diags.report(Tok.getLocation(), diag::err_expected_identifier, Tok.getText());
+      skipUntil(tok::r_square);
+      if (Tok.is(tok::r_square)) advance();
+      continue;
+    }
+    StringRef pName = Tok.getText();
+    advance();
+
+    if (!consume(TokenKind::colon)) {
+      Diags.report(Tok.getLocation(), diag::err_no_colon, Tok.getText());
+      skipUntil(tok::r_square);
+      if (Tok.is(tok::r_square)) advance();
+      continue;
+    }
+
+    ParamType* pType = parseType();
+    if (!pType) { 
+        skipUntil(tok::r_square);
+        if (Tok.is(tok::r_square)) advance();
+        continue;
+    }
+
+    if (!consume(TokenKind::r_square)) {
+      Diags.report(Tok.getLocation(), diag::err_no_rsquare, Tok.getText());
+    }
+    params.emplace_back(pName, pType);
+  }
+
+  if (!consume(TokenKind::r_paren)) {
+    Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
+    skipUntil(tok::r_paren);
+    if (Tok.is(tok::r_paren)) advance();
+    return nullptr;
+  }
+
+  if (!consume(TokenKind::colon)) {
     Diags.report(Tok.getLocation(), diag::err_no_colon, Tok.getText());
+    skipUntil(tok::r_paren);
+    if (Tok.is(tok::r_paren)) advance();
+    return nullptr;
+  }
   ParamType* retTy = parseType();
+  if (!retTy) {
+      skipUntil(tok::r_paren);
+      if (Tok.is(tok::r_paren)) advance();
+        return nullptr; 
+  }
 
-  // body expression
   Expr* body = parseExpr();
+  if (!body) {
+      skipUntil(tok::r_paren);
+      if (Tok.is(tok::r_paren)) advance();
+      return nullptr;
+  }
 
-  if (!consume(TokenKind::r_paren))
+
+  if (!consume(TokenKind::r_paren)) {
     Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
+  }
 
   return new FunctionDef(fnName, params, retTy, body);
 }
 
 ParamType* Parser::parseType() {
-  // basic names
+  llvm::SMLoc TypeStartLoc = Tok.getLocation();
+
   if (Tok.is(TokenKind::kw_INTEGERTYPE)) {
     advance();
     return new BasicParamType(ParamType::PK_Integer, "Integer");
@@ -86,28 +144,62 @@ ParamType* Parser::parseType() {
     return new BasicParamType(ParamType::PK_Void, "Void");
   }
 
-  // parenthesized type: either Vector or arrow‐type
-  if (consume(TokenKind::l_paren)) {
+  if (Tok.is(TokenKind::l_paren)) {
+    advance();
+
     if (Tok.is(TokenKind::kw_VECTORTYPE)) {
-      // Vector type
       advance();
       std::vector<ParamType*> elems;
-      while (!Tok.is(TokenKind::r_paren))
-        elems.push_back(parseType());
-      consume(TokenKind::r_paren);
+      while (!Tok.is(TokenKind::r_paren) && !Tok.is(TokenKind::eof)) {
+        ParamType* elemType = parseType();
+        if (!elemType) {
+            skipUntil(tok::r_paren);
+            if(Tok.is(tok::r_paren)) advance();
+            return nullptr;
+        }
+        elems.push_back(elemType);
+      }
+      if (!consume(TokenKind::r_paren)) {
+        Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
+        return nullptr;
+      }
       return new VectorParamType(elems);
+
+    } else {
+      std::vector<ParamType*> args;
+      while (!Tok.is(TokenKind::arrow) && !Tok.is(TokenKind::r_paren) && !Tok.is(TokenKind::eof)) {
+          ParamType* argType = parseType();
+          if (!argType) {
+              skipUntil(tok::r_paren);
+              if(Tok.is(tok::r_paren)) advance();
+              return nullptr;
+          }
+          args.push_back(argType);
+      }
+
+      if (!consume(TokenKind::arrow)) {
+        Diags.report(Tok.getLocation(), diag::err_unexpected_token, "Expected '->' in function type");
+        skipUntil(tok::r_paren);
+        if(Tok.is(tok::r_paren)) advance();
+        return nullptr;
+      }
+
+      ParamType* ret = parseType();
+       if (!ret) {
+          skipUntil(tok::r_paren);
+          if(Tok.is(tok::r_paren)) advance();
+          return nullptr;
+       }
+
+      if (!consume(TokenKind::r_paren)) {
+        Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
+        return nullptr;
+      }
+      return new FunctionParamType(args, ret);
     }
-    // arrow‐type: ( t1 t2 … -> tr )
-    std::vector<ParamType*> args;
-    while (!Tok.is(TokenKind::arrow) && !Tok.is(TokenKind::eof))
-      args.push_back(parseType());
-    consume(TokenKind::arrow);
-    ParamType* ret = parseType();
-    consume(TokenKind::r_paren);
-    return new FunctionParamType(args, ret);
   }
 
-  Diags.report(Tok.getLocation(), diag::err_unknown_param_type, Tok.getText());
+  Diags.report(TypeStartLoc, diag::err_unknown_param_type, Tok.getText());
   advance();
   return nullptr;
 }
@@ -437,5 +529,27 @@ Expr *Parser::parseExpr() {
     
     return new VecSet(VecExpr, IndexExpr, ValueExpr);
   }
-  return ErrorHandler();
+
+  Expr* funcExpr = parseExpr();
+  if (!funcExpr) {
+      skipUntil(tok::r_paren); if(Tok.is(tok::r_paren)) advance();
+      return nullptr;
+  }
+
+
+  std::vector<Expr*> args;
+  while (!Tok.is(TokenKind::r_paren) && !Tok.is(TokenKind::eof)) {
+    Expr* argExpr = parseExpr();
+    if (!argExpr) {
+      skipUntil(tok::r_paren); if(Tok.is(tok::r_paren)) advance();
+      return nullptr;
+    }
+    args.push_back(argExpr);
+  }
+
+  if (!consume(TokenKind::r_paren)) {
+    return ErrorHandler(diag::err_no_rparen);
+  }
+
+  return new Apply(funcExpr, args);
 }

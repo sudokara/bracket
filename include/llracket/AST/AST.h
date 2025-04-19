@@ -12,7 +12,8 @@ enum class ExprTypes {
   Integer,
   Bool,
   Void,
-  Vector
+  Vector,
+  Function
 };
 
 class AST;
