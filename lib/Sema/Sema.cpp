@@ -3,6 +3,10 @@
 #include "llvm/Support/raw_ostream.h"
 
 namespace {
+struct FunctionInfo {
+  std::vector<ExprTypes> paramTypes;
+  ExprTypes returnType;
+};
 class ProgramCheck : public ASTVisitor {
   bool HasError;
   llvm::StringSet<> ScopedVariables;
@@ -10,7 +14,20 @@ class ProgramCheck : public ASTVisitor {
   StringMap <Vec*> Vectors;
   DenseMap <const Expr*, ExprTypes> ExpressionTypes;
   DenseMap <const VecRef*, Vec*> VecRefToVec;
+  StringMap<FunctionInfo> FunctionTable;
   Program *RootProgram;
+
+  ExprTypes convertParamTypeToExprType(ParamType *T) {
+    if (!T) return ExprTypes::Unknown;
+    switch (T->getKind()) {
+      case ParamType::PK_Integer: return ExprTypes::Integer;
+      case ParamType::PK_Boolean: return ExprTypes::Bool;
+      case ParamType::PK_Void: return ExprTypes::Void;
+      case ParamType::PK_Vector: return ExprTypes::Vector;
+      case ParamType::PK_Function: return ExprTypes::Function;
+      default: return ExprTypes::Unknown;
+    }
+  }
 
 public:
   ProgramCheck() : HasError(false), RootProgram(nullptr) {}
@@ -62,26 +79,43 @@ public:
       case ExprTypes::Bool: return "Boolean";
       case ExprTypes::Void: return "Void";
       case ExprTypes::Vector: return "Vector";
+      case ExprTypes::Function: return "Function";
       default: return "Unknown";
     }
   }
 
   virtual void visit(Program &Node) override {
     setRootProgram(&Node);
+
+    for (FunctionDef *FD : Node.getFunctionDefs()) {
+      if (FunctionTable.count(FD->getName())) {
+        llvm::errs() << "Error: Redefinition of function " << FD->getName() << "\n";
+        HasError = true;
+        return;
+      }
+      std::vector<ExprTypes> paramTypes;
+      for (auto &P : FD->getParams())
+        paramTypes.push_back(convertParamTypeToExprType(P.second));
+      ExprTypes retTy = convertParamTypeToExprType(FD->getReturnType());
+      FunctionTable[FD->getName()] = {paramTypes, retTy};
+    }
+
+    for (FunctionDef *Def : Node.getFunctionDefs()) {
+      Def->accept(*this);
+    }
+
     if (Node.getExpr()) {
       Node.getExpr()->accept(*this);
-
-      // just (read) is an error
       if (auto *Prim = llvm::dyn_cast<::Prim>(Node.getExpr())) {
         if (Prim->getOp() == tok::read) {
-          llvm::errs() << "Error: Cannot determine type for standalone read expression\n";
+          llvm::errs() << "Error: Cannot determine type for standalone read\n";
           HasError = true;
         }
       }
-    }
-    else
+    } else {
       HasError = true;
-  };
+    }
+  }
 
   virtual void visit(Expr &Node) override {
     // uses the classof method to check the type of the node
@@ -138,6 +172,10 @@ public:
       return;
     }
     if (llvm::isa<VecSet>(Node)) {
+      Node.accept(*this);
+      return;
+    }
+    if (llvm::isa<Apply>(Node)) {
       Node.accept(*this);
       return;
     }
@@ -410,13 +448,15 @@ public:
   }
 
   virtual void visit(Var &Node) override {
-    if (!ScopedVariables.count(Node.getName())) { // check that the variable is in scope
-      llvm::errs() << "Error: Variable " << Node.getName() << " is not defined\n";
+    if (ScopedVariables.count(Node.getName())) {
+      setExprType(&Node, VariableTypes[Node.getName()]);
+    } else if (FunctionTable.count(Node.getName())) {
+      setExprType(&Node, ExprTypes::Function);
+    } else {
+      llvm::errs() << "Error: Undefined variable " << Node.getName() << "\n";
       HasError = true;
       setExprType(&Node, ExprTypes::Unknown);
-      return;
     }
-    setExprType(&Node, VariableTypes[Node.getName()]);
   }
 
   virtual void visit(Let &Node) override {
@@ -889,6 +929,81 @@ public:
     // vector-set! always returns Void
     setExprType(&Node, ExprTypes::Void);
   }
+
+  virtual void visit(FunctionDef &Node) override {
+    std::vector<ExprTypes> paramTypes;
+    for (auto &Param : Node.getParams()) {
+      paramTypes.push_back(convertParamTypeToExprType(Param.second));
+    }
+
+    ExprTypes returnType = convertParamTypeToExprType(Node.getReturnType());
+
+    FunctionTable[Node.getName()] = {paramTypes, returnType};
+
+    llvm::StringSet<> oldScoped = ScopedVariables;
+    StringMap<ExprTypes> oldVariableTypes = VariableTypes;
+    ScopedVariables.clear();
+    VariableTypes.clear();
+
+    for (auto &Param : Node.getParams()) {
+      StringRef name = Param.first;
+      ExprTypes type = convertParamTypeToExprType(Param.second);
+      ScopedVariables.insert(name);
+      VariableTypes[name] = type;
+    }
+
+    Node.getBody()->accept(*this);
+    ExprTypes bodyType = getExprType(Node.getBody());
+
+    if (bodyType != returnType) {
+      llvm::errs() << "Error: Function " << Node.getName() << " return type mismatch\n";
+      HasError = true;
+    }
+
+    ScopedVariables = oldScoped;
+    VariableTypes = oldVariableTypes;
+  }
+
+  virtual void visit(Apply &Node) override {
+    Node.getFunction()->accept(*this);
+    ExprTypes funcType = getExprType(Node.getFunction());
+    if (funcType != ExprTypes::Function) {
+      llvm::errs() << "Error: Applying non-function type " << getTypeString(funcType) << "\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
+
+    if (Var *funcVar = llvm::dyn_cast<Var>(Node.getFunction())) {
+      StringRef funcName = funcVar->getName();
+      auto it = FunctionTable.find(funcName);
+      if (it != FunctionTable.end()) {
+        const FunctionInfo &info = it->second;
+        const std::vector<Expr*> &args = Node.getArguments();
+        if (args.size() != info.paramTypes.size()) {
+          llvm::errs() << "Error: Function " << funcName << " argument count mismatch\n";
+          HasError = true;
+          setExprType(&Node, ExprTypes::Unknown);
+          return;
+        }
+
+        for (size_t i = 0; i < args.size(); ++i) {
+          args[i]->accept(*this);
+          ExprTypes argType = getExprType(args[i]);
+          if (argType != info.paramTypes[i]) {
+            llvm::errs() << "Error: Argument " << (i+1) << " type mismatch in function " << funcName << "\n";
+            HasError = true;
+          }
+        }
+
+        setExprType(&Node, info.returnType);
+        return;
+      }
+    }
+
+    setExprType(&Node, ExprTypes::Unknown);
+  }
+
 };
 } // namespace
 
