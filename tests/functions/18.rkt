@@ -1,0 +1,3 @@
+(define () : Integer
+  7)
+()

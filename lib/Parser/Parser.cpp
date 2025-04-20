@@ -113,13 +113,16 @@ FunctionDef* Parser::parseFunctionDef() {
         return nullptr; 
   }
 
+  pushScope();
+  for (const auto &p : params)
+    TypeEnv.back()[p.first] = p.second;
   Expr* body = parseExpr();
   if (!body) {
-      skipUntil(tok::r_paren);
-      if (Tok.is(tok::r_paren)) advance();
-      return nullptr;
+    skipUntil(tok::r_paren);
+    if (Tok.is(tok::r_paren)) advance();
+    return nullptr;
   }
-
+  popScope();
 
   if (!consume(TokenKind::r_paren)) {
     Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
@@ -153,9 +156,9 @@ ParamType* Parser::parseType() {
       while (!Tok.is(TokenKind::r_paren) && !Tok.is(TokenKind::eof)) {
         ParamType* elemType = parseType();
         if (!elemType) {
-            skipUntil(tok::r_paren);
-            if(Tok.is(tok::r_paren)) advance();
-            return nullptr;
+          skipUntil(tok::r_paren);
+          if(Tok.is(tok::r_paren)) advance();
+          return nullptr;
         }
         elems.push_back(elemType);
       }
@@ -168,13 +171,13 @@ ParamType* Parser::parseType() {
     } else {
       std::vector<ParamType*> args;
       while (!Tok.is(TokenKind::arrow) && !Tok.is(TokenKind::r_paren) && !Tok.is(TokenKind::eof)) {
-          ParamType* argType = parseType();
-          if (!argType) {
-              skipUntil(tok::r_paren);
-              if(Tok.is(tok::r_paren)) advance();
-              return nullptr;
-          }
-          args.push_back(argType);
+        ParamType* argType = parseType();
+        if (!argType) {
+          skipUntil(tok::r_paren);
+          if(Tok.is(tok::r_paren)) advance();
+          return nullptr;
+        }
+        args.push_back(argType);
       }
 
       if (!consume(TokenKind::arrow)) {
@@ -185,11 +188,11 @@ ParamType* Parser::parseType() {
       }
 
       ParamType* ret = parseType();
-       if (!ret) {
-          skipUntil(tok::r_paren);
-          if(Tok.is(tok::r_paren)) advance();
-          return nullptr;
-       }
+      if (!ret) {
+        skipUntil(tok::r_paren);
+        if(Tok.is(tok::r_paren)) advance();
+        return nullptr;
+      }
 
       if (!consume(TokenKind::r_paren)) {
         Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
@@ -220,9 +223,10 @@ Expr *Parser::parseExpr() {
 
   // variable
   if (Tok.is(TokenKind::identifier)) {
-    Var *VarExpr = new Var(Tok.getText());
+    StringRef name = Tok.getText();
+    ParamType *ty = lookupType(name);
     advance();
-    return VarExpr;
+    return new Var(name, ty);
   }
 
   if (Tok.is(TokenKind::integer_literal)) {
@@ -532,10 +536,9 @@ Expr *Parser::parseExpr() {
 
   Expr* funcExpr = parseExpr();
   if (!funcExpr) {
-      skipUntil(tok::r_paren); if(Tok.is(tok::r_paren)) advance();
-      return nullptr;
+    skipUntil(tok::r_paren); if(Tok.is(tok::r_paren)) advance();
+    return nullptr;
   }
-
 
   std::vector<Expr*> args;
   while (!Tok.is(TokenKind::r_paren) && !Tok.is(TokenKind::eof)) {

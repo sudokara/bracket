@@ -6,12 +6,23 @@
 #include "llracket/Lexer/Lexer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 #include <vector>
 
 class Parser {
   Lexer &Lex;
   Token Tok;
   DiagnosticsEngine &Diags;
+
+  llvm::SmallVector<llvm::StringMap<ParamType*>, 8> TypeEnv;
+  void pushScope()        { TypeEnv.emplace_back(); }
+  void popScope()         { TypeEnv.pop_back(); }
+  ParamType *lookupType(StringRef Name) {
+    for (auto &Env : llvm::reverse(TypeEnv))
+      if (auto *T = Env.lookup(Name))
+        return T;
+    return nullptr;
+  }
 
   // {Received Token, Expected Token}
   std::vector<std::pair<TokenKind, TokenKind>> UnexpectedTokens;

@@ -6,6 +6,7 @@ namespace {
 struct FunctionInfo {
   std::vector<ExprTypes> paramTypes;
   ExprTypes returnType;
+  Vec* returnVec = nullptr;
 };
 class ProgramCheck : public ASTVisitor {
   bool HasError;
@@ -448,15 +449,28 @@ public:
   }
 
   virtual void visit(Var &Node) override {
+    // if parser attached a ParamType (i.e. function parameter), use that
+    if (auto *PT = Node.getType()) {
+      setExprType(&Node, convertParamTypeToExprType(PT));
+      return;
+    }
+
+    // else if it’s a let‐bound local, use your VariableTypes map
     if (ScopedVariables.count(Node.getName())) {
       setExprType(&Node, VariableTypes[Node.getName()]);
-    } else if (FunctionTable.count(Node.getName())) {
-      setExprType(&Node, ExprTypes::Function);
-    } else {
-      llvm::errs() << "Error: Undefined variable " << Node.getName() << "\n";
-      HasError = true;
-      setExprType(&Node, ExprTypes::Unknown);
+      return;
     }
+
+    // else if it's a known function name
+    if (FunctionTable.count(Node.getName())) {
+      setExprType(&Node, ExprTypes::Function);
+      return;
+    }
+
+    // otherwise undefined
+    llvm::errs() << "Error: Undefined variable " << Node.getName() << "\n";
+    HasError = true;
+    setExprType(&Node, ExprTypes::Unknown);
   }
 
   virtual void visit(Let &Node) override {
@@ -479,9 +493,20 @@ public:
       oldType = VariableTypes[Node.getVarName()]; // store the old type if the variable is shadowed
       oldVector = Vectors[Node.getVarName()]; // store the old vector if the variable is shadowed
     }
+
     ScopedVariables.insert(Node.getVarName()); // add the variable to the scope
     if (BindingType == ExprTypes::Vector) {
-      Vectors[Node.getVarName()] = llvm::dyn_cast<Vec>(Node.getBinding());
+      // direct literal
+      if (auto *VL = llvm::dyn_cast<Vec>(Node.getBinding())) {
+        Vectors[Node.getVarName()] = VL;
+      }
+
+      // forwarding a vector‐var
+      else if (auto *VV = llvm::dyn_cast<Var>(Node.getBinding())) {
+        auto it = Vectors.find(VV->getName());
+        if (it != Vectors.end())
+          Vectors[Node.getVarName()] = it->second;
+      }
     }
     VariableTypes[Node.getVarName()] = BindingType; // set the type of the variable
 
@@ -694,6 +719,12 @@ public:
 
     if (VecExpr) {
       VecExpr->accept(*this);
+
+      // if the sub‐expression was inferred to be a vector (e.g. (empty)), accept it
+      if (getExprType(VecExpr) == ExprTypes::Vector) {
+        setExprType(&Node, ExprTypes::Integer);
+        return;
+      }
       
       // case 1: VecExpr is a variable
       // here we can access the vector using the variable name
@@ -702,7 +733,7 @@ public:
           setExprType(&Node, ExprTypes::Integer);
           return;
         } else {
-          llvm::errs() << "The requested vector " << VarVecExpr->getName() << " is not defined\n";
+          llvm::errs() << "Error: The requested vector " << VarVecExpr->getName() << " is not defined\n";
           HasError = true;
           setExprType(&Node, ExprTypes::Unknown);
           return;
@@ -739,6 +770,31 @@ public:
       HasError = true;
       setExprType(&Node, ExprTypes::Unknown);
       return;
+    }
+
+    if (auto *VarVec = llvm::dyn_cast<Var>(VecExpr)) {
+      ParamType *ParamTy = VarVec->getType();
+      if (ParamTy && llvm::isa<VectorParamType>(ParamTy)) {
+        auto *VecPT = llvm::cast<VectorParamType>(ParamTy);
+        // ensure index is a compile-time Int
+        IndexExpr->accept(*this);
+        if (auto *IdxInt = llvm::dyn_cast<Int>(IndexExpr)) {
+          long i;
+          if (!IdxInt->getValue().getAsInteger(10, i) &&
+              i >= 0 &&
+              (size_t)i < VecPT->getElementTypes().size()) {
+            // assign the element’s declared type
+            ExprTypes et = convertParamTypeToExprType(
+                              VecPT->getElementTypes()[i]);
+            setExprType(&Node, et);
+            return;
+          }
+        }
+        llvm::errs() << "Error: Invalid or out-of-bounds index for vector parameter\n";
+        HasError = true;
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
     }
   
     // vector expression type check
@@ -781,7 +837,6 @@ public:
     // resolve the Vec AST that this VecRef indexes
     Vec *ResolvedVector = resolveVectorExpr(VecExpr);
     if (!ResolvedVector) {
-      // error already reported from resolveVectorExpr
       setExprType(&Node, ExprTypes::Unknown);
       return;
     }
@@ -811,6 +866,15 @@ public:
   }
 
   Vec* resolveVectorExpr(Expr* VecExpr) {
+    // first: if it's an Apply of a known function that returns a literal Vec
+    if (auto *AP = llvm::dyn_cast<Apply>(VecExpr)) {
+      if (auto *FV = llvm::dyn_cast<Var>(AP->getFunction())) {
+        auto I = FunctionTable.find(FV->getName());
+        if (I != FunctionTable.end() && I->second.returnVec)
+          return I->second.returnVec;
+      }
+    }
+
     if (auto *VarExpr = llvm::dyn_cast<Var>(VecExpr)) {
       // case 1: VecExpr is a variable
       if (!Vectors.count(VarExpr->getName())) {
@@ -932,13 +996,18 @@ public:
 
   virtual void visit(FunctionDef &Node) override {
     std::vector<ExprTypes> paramTypes;
-    for (auto &Param : Node.getParams()) {
-      paramTypes.push_back(convertParamTypeToExprType(Param.second));
-    }
-
+    for (auto &P : Node.getParams())
+      paramTypes.push_back(convertParamTypeToExprType(P.second));
     ExprTypes returnType = convertParamTypeToExprType(Node.getReturnType());
 
-    FunctionTable[Node.getName()] = {paramTypes, returnType};
+    // stash a stub in the table (returnVec defaults to nullptr)
+    FunctionTable[Node.getName()] = { paramTypes, returnType, nullptr };
+
+    // if this function literally returns a Vec AST, record it
+    if (returnType == ExprTypes::Vector) {
+      if (auto *VB = llvm::dyn_cast<Vec>(Node.getBody()))
+        FunctionTable[Node.getName()].returnVec = VB;
+    }
 
     llvm::StringSet<> oldScoped = ScopedVariables;
     StringMap<ExprTypes> oldVariableTypes = VariableTypes;
@@ -975,6 +1044,38 @@ public:
       return;
     }
 
+    if (auto *funcVar = llvm::dyn_cast<Var>(Node.getFunction())) {
+      if (auto *PT = funcVar->getType()) {
+        if (PT->getKind() == ParamType::PK_Function) {
+          auto *FPT = llvm::dyn_cast<FunctionParamType>(PT);
+          const auto &expected = FPT->getParamTypes();
+          auto *retPT = FPT->getReturnType();
+
+          if (Node.getArguments().size() != expected.size()) {
+            llvm::errs() << "Error: Argument count mismatch in function variable "
+                         << funcVar->getName() << "\n";
+            HasError = true;
+            setExprType(&Node, ExprTypes::Unknown);
+            return;
+          }
+
+          for (size_t i = 0, e = expected.size(); i != e; ++i) {
+            Expr *arg = Node.getArguments()[i];
+            arg->accept(*this);
+            ExprTypes found = getExprType(arg);
+            ExprTypes want  = convertParamTypeToExprType(expected[i]);
+            if (found != want) {
+              raiseTypeError(arg, want, found);
+              HasError = true;
+            }
+          }
+
+          setExprType(&Node, convertParamTypeToExprType(retPT));
+          return;
+        }
+      }
+    }
+
     if (Var *funcVar = llvm::dyn_cast<Var>(Node.getFunction())) {
       StringRef funcName = funcVar->getName();
       auto it = FunctionTable.find(funcName);
@@ -998,7 +1099,6 @@ public:
         }
 
         setExprType(&Node, info.returnType);
-        llvm::errs() << "Function " << funcName << " returns type " << getTypeString(info.returnType) << "\n";
         return;
       }
     }

@@ -561,7 +561,7 @@ public:
     StringRef varName = Node.getVarName();
     
     if (nameMap.find(varName) == nameMap.end()) {
-      llvm::errs() << "Variable not found during codegen: " << varName << "\n";
+      llvm::errs() << "Error: Variable not found during codegen: " << varName << "\n";
       V = UndefValue::get(Int32Ty);
       return;
     }

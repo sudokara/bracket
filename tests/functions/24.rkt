@@ -1,0 +1,5 @@
+(define (inc [x : Integer]) : Integer (+ x 1))
+(define (dec [x : Integer]) : Integer (- x 1))
+(define funcs : (Vector (Integer -> Integer) (Integer -> Integer))
+  (vector inc dec))
+((vector-ref funcs 0) 10)

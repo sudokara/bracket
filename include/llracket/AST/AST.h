@@ -67,6 +67,28 @@ public:
   virtual void accept(ASTVisitor &V) = 0;
 };
 
+class ParamType {
+  public:
+    enum ParamKind {
+      PK_Integer,
+      PK_Boolean,
+      PK_Void,
+      PK_Vector,
+      PK_Function
+    };
+  
+  private:
+    ParamKind Kind;
+  
+  public:
+    ParamType(ParamKind Kind) : Kind(Kind) {}
+    virtual ~ParamType() {}
+    
+    ParamKind getKind() const { return Kind; }
+    
+    static bool classof(const ParamType *T) { return true; }
+  };
+
 class Program : public AST {
   std::vector<FunctionDef *> Defs;
   Expr *E;
@@ -147,12 +169,14 @@ public:
 
 class Var: public Expr {
   StringRef Name;
+  ParamType *Type;
 
   public:
-  Var(StringRef Name) : Expr(ExprVar), Name(Name) {};
+  Var(StringRef Name, ParamType *Type = nullptr) : Expr(ExprVar), Name(Name), Type(Type) {};
   StringRef getName() const { return Name; };
-  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+  ParamType* getType() const { return Type; }
 
+  virtual void accept(ASTVisitor &V) override { V.visit(*this); }
   static bool classof(const Expr *E) { return E->getKind() == ExprVar; }
 };
 
@@ -302,28 +326,6 @@ public:
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
 
   static bool classof(const Expr *E) { return E->getKind() == ExprVecSet; }
-};
-
-class ParamType {
-public:
-  enum ParamKind {
-    PK_Integer,
-    PK_Boolean,
-    PK_Void,
-    PK_Vector,
-    PK_Function
-  };
-
-private:
-  ParamKind Kind;
-
-public:
-  ParamType(ParamKind Kind) : Kind(Kind) {}
-  virtual ~ParamType() {}
-  
-  ParamKind getKind() const { return Kind; }
-  
-  static bool classof(const ParamType *T) { return true; }
 };
 
 class BasicParamType : public ParamType {
