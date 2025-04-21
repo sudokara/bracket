@@ -669,8 +669,8 @@ public:
             // Special handling for function elements in vectors
             if (auto *VE = llvm::dyn_cast<Var>(E)) {
                 // Store function pointer as integer in the vector
-                Function *F = functionPrototypes[VE->getName()];
-                v = Builder.CreatePtrToInt(F, IntPtrTy, "func2int");
+                // Function *F = functionPrototypes[VE->getName()];
+                // v = Builder.CreatePtrToInt(F, IntPtrTy, "func2int");
             }
         } else {
             if (v->getType()->isIntegerTy(1) ||
