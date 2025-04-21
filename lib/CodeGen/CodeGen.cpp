@@ -81,6 +81,7 @@ public:
           case ParamType::PK_Boolean: retTy = BoolTy;       break;
           case ParamType::PK_Vector:  retTy = VectorPtrTy;  break;
           case ParamType::PK_Void:    retTy = VoidTy;       break;
+          case ParamType::PK_Function: retTy = IntPtrTy;    break;
           default: retTy = Int32Ty;                         break;
         }
         FunctionType *FT =
@@ -125,6 +126,12 @@ public:
         FD->getBody()->accept(*this);
         Value *retVal = V;
 
+        if (FD->getReturnType()->getKind() == ParamType::PK_Function) {
+          retVal = Builder.CreatePtrToInt(retVal,
+                                          IntPtrTy,
+                                          "func2int");
+        }
+
         // emit return
         if (F->getReturnType()->isVoidTy()) {
           Builder.CreateRetVoid();
@@ -149,7 +156,7 @@ public:
 
     if (resultType == ExprTypes::Void) {
     } 
-    else if (V->getType()->isIntegerTy(1)) {
+    else if (resultType == ExprTypes::Bool || V->getType()->isIntegerTy(1)) {
       // boolean (bitwidth 1)
       FunctionType *WriteBoolFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
       Function *WriteBoolFn = Function::Create(
@@ -157,7 +164,7 @@ public:
       Value *ExtendedV = Builder.CreateZExt(V, Int32Ty, "ext_bool");
       Builder.CreateCall(WriteBoolFn, {ExtendedV});
     } 
-    else if (V->getType()->isIntegerTy(32)) {
+    else if (resultType == ExprTypes::Integer || V->getType()->isIntegerTy(32)) {
       // integer (int32)
       FunctionType *WriteIntFnTy = FunctionType::get(VoidTy, {Int32Ty}, false);
       Function *WriteIntFn = Function::Create(
@@ -869,17 +876,21 @@ public:
     // codegen the function body
     Node.getBody()->accept(*this);
     Value *retVal = V;
-
-    // emit return
-    if (F->getReturnType()->isVoidTy()) {
-        Builder.CreateRetVoid();
-    } else {
-        Builder.CreateRet(retVal);
+    
+    ParamType *returnPT = Node.getReturnType();
+    if (returnPT->getKind() == ParamType::PK_Function) {
+      // If the body was “neg” or some function var, we have a Function* in V:
+      if (auto *FVar = llvm::dyn_cast<Function>(V)) {
+        // ptr → integer
+        V = Builder.CreatePtrToInt(FVar, IntPtrTy, "func2int");
+      } else {
+        // could be a function‐parameter or loaded pointer
+        V = Builder.CreatePtrToInt(V, IntPtrTy, "func2int");
+      }
     }
+    Builder.CreateRet(V);
     
     llvm::verifyFunction(*F, &errs());
-
-    // restore
     nameMap = oldNameMap;
   }
 };
