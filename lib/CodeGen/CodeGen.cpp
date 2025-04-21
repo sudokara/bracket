@@ -23,8 +23,20 @@ class ToIRVisitor : public ASTVisitor {
   Value *V;
   StringMap<Value*> nameMap;
   StringMap<Function*> functionPrototypes;
+  StringMap<std::pair<FunctionType*, ParamType*>> FunctionSignatures;
   ProgramInfo TypeInfo;
   Program* RootProgram;
+
+  Type* getLLVMTypeForParam(ParamType *PT) {
+    switch (PT->getKind()) {
+      case ParamType::PK_Integer: return Int32Ty;
+      case ParamType::PK_Boolean: return BoolTy;
+      case ParamType::PK_Vector: return VectorPtrTy;
+      case ParamType::PK_Function: return IntPtrTy;
+      case ParamType::PK_Void: return VoidTy;
+      default: return Int32Ty;
+    }
+  }
 
 public:
   ToIRVisitor(Module *M) : M(M), Builder(M->getContext()), RootProgram(nullptr) {
@@ -85,13 +97,14 @@ public:
           default: retTy = Int32Ty;                         break;
         }
         FunctionType *FT =
-          FunctionType::get(retTy, params, false);
+          FunctionType::get(getLLVMTypeForParam(FD->getReturnType()), params, false);
         Function *F =
           Function::Create(FT,
                            GlobalValue::ExternalLinkage,
                            FD->getName(),
                            M);
         functionPrototypes[FD->getName()] = F;
+        FunctionSignatures[FD->getName()] = {FT, FD->getReturnType()};
       }
 
       for (FunctionDef *FD : P->getFunctionDefs()) {
@@ -731,37 +744,109 @@ public:
     V = UndefValue::get(Int32Ty);
   }
 
+  // virtual void visit(Apply &Node) override {
+  //   std::vector<Value*> argsV;
+  //   for (Expr *E : Node.getArguments()) {
+  //       E->accept(*this);
+  //       argsV.push_back(V);
+  //   }
+
+  //   Node.getFunction()->accept(*this);
+  //   Value *funcValue = V;
+    
+  //   if (auto *F = dyn_cast<Function>(funcValue)) {
+  //       // the function is already a Function* 
+  //       V = Builder.CreateCall(F, argsV, "calltmp");
+  //   } else {
+  //       // through a pointer
+  //       std::vector<Type*> argTypes(argsV.size(), Int32Ty);
+  //       FunctionType *FT = FunctionType::get(Int32Ty, argTypes, false);
+        
+  //       Value *funcPtr = funcValue;
+  //       if (funcPtr->getType()->isPointerTy()) {
+  //           Type *pointeeType = cast<PointerType>(funcPtr->getType());
+  //           if (llvm::isa<FunctionType>(pointeeType)) {
+  //               funcPtr = Builder.CreateBitCast(funcPtr, FT->getPointerTo(), "func_ptr_cast");
+  //           } else {
+  //               funcPtr = Builder.CreateIntToPtr(funcPtr, FT->getPointerTo(), "int2func");
+  //           }
+  //       } else {
+  //           funcPtr = Builder.CreateIntToPtr(funcPtr, FT->getPointerTo(), "int2func");
+  //       }
+        
+  //       V = Builder.CreateCall(FT, funcPtr, argsV, "indirect_call");
+  //   }
+  // }
   virtual void visit(Apply &Node) override {
+    // Collect arguments first
     std::vector<Value*> argsV;
     for (Expr *E : Node.getArguments()) {
-        E->accept(*this);
-        argsV.push_back(V);
+      E->accept(*this);
+      argsV.push_back(V);
     }
 
+    // Get the function to call
     Node.getFunction()->accept(*this);
     Value *funcValue = V;
     
-    if (auto *F = dyn_cast<Function>(funcValue)) {
-        // the function is already a Function* 
-        V = Builder.CreateCall(F, argsV, "calltmp");
+    // Helper function to get LLVM type from ParamType
+    auto getLLVMType = [&](ParamType *PT) -> Type* {
+      switch (PT->getKind()) {
+        case ParamType::PK_Integer: return Int32Ty;
+        case ParamType::PK_Boolean: return BoolTy;
+        case ParamType::PK_Vector:  return VectorPtrTy;
+        case ParamType::PK_Function: return IntPtrTy;
+        case ParamType::PK_Void:    return VoidTy;
+        default:                    return Int32Ty;
+      }
+    };
+
+    if (auto *F = llvm::dyn_cast<Function>(funcValue)) {
+      // Direct function call - use prototype signature
+      V = Builder.CreateCall(F, argsV, "direct_call");
     } else {
-        // through a pointer
-        std::vector<Type*> argTypes(argsV.size(), Int32Ty);
-        FunctionType *FT = FunctionType::get(Int32Ty, argTypes, false);
-        
-        Value *funcPtr = funcValue;
-        if (funcPtr->getType()->isPointerTy()) {
-            Type *pointeeType = cast<PointerType>(funcPtr->getType());
-            if (llvm::isa<FunctionType>(pointeeType)) {
-                funcPtr = Builder.CreateBitCast(funcPtr, FT->getPointerTo(), "func_ptr_cast");
-            } else {
-                funcPtr = Builder.CreateIntToPtr(funcPtr, FT->getPointerTo(), "int2func");
+      // Indirect call - determine signature from type information
+      FunctionType *FT = nullptr;
+      Type *ReturnTy = Int32Ty;
+      ParamType *FuncPT = nullptr;
+
+      // Try to get function type from variable declaration
+      if (auto *VarNode = llvm::dyn_cast<Var>(Node.getFunction())) {
+        if (ParamType *PT = VarNode->getType()) {
+          if (auto *FPT = llvm::dyn_cast<FunctionParamType>(PT)) {
+            // Get parameter types
+            std::vector<Type*> ParamTypes;
+            for (auto *ParamPT : FPT->getParamTypes()) {
+              ParamTypes.push_back(getLLVMType(ParamPT));
             }
-        } else {
-            funcPtr = Builder.CreateIntToPtr(funcPtr, FT->getPointerTo(), "int2func");
+            
+            // Get return type
+            ReturnTy = getLLVMType(FPT->getReturnType());
+            FT = FunctionType::get(ReturnTy, ParamTypes, false);
+          }
         }
-        
-        V = Builder.CreateCall(FT, funcPtr, argsV, "indirect_call");
+      }
+
+      // Fallback to default type if no type info found
+      if (!FT) {
+        std::vector<Type*> DefaultParamTypes(argsV.size(), Int32Ty);
+        FT = FunctionType::get(Int32Ty, DefaultParamTypes, false);
+        llvm::errs() << "Warning: Using default function type for indirect call\n";
+      }
+
+      // Cast raw integer to correct function pointer type
+      Value *CastedFunc = Builder.CreateIntToPtr(
+        funcValue, 
+        FT->getPointerTo(),
+        "func_ptr_cast"
+      );
+
+      // Create the call with proper signature
+      V = Builder.CreateCall(FT, CastedFunc, argsV, "indirect_call");
+      
+      // Handle void returns
+      if (ReturnTy->isVoidTy())
+        V = Builder.CreateRetVoid();
     }
   }
 
