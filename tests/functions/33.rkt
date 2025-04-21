@@ -1,0 +1,5 @@
+(define (ret-fn [a : (Integer -> Integer)] [b : Integer]) : (Vector (Integer -> Integer) Integer)
+  (vector a b))
+(define (inc [x : Integer]) : Integer (+ x 1))
+(let ([result (ret-fn inc 41)])
+  ((vector-ref result 0) (vector-ref result 1)))

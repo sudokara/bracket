@@ -54,6 +54,7 @@ int LLRacket::exec() {
   // Semantic analysis
   Sema S;
   if (!S.semantic(Tree)) {
+    llvm::errs() << "Semantic error\n";
     return 2;
   }
 

@@ -547,6 +547,16 @@ public:
         if (it != Vectors.end())
           Vectors[Node.getVarName()] = it->second;
       }
+
+      // binding via a function whose body was a Vec literal
+      else if (auto *AP = llvm::dyn_cast<Apply>(Node.getBinding())) {
+        if (auto *FV = llvm::dyn_cast<Var>(AP->getFunction())) {
+          auto fit = FunctionTable.find(FV->getName());
+          if (fit != FunctionTable.end() && fit->second.returnVec) {
+            Vectors[Node.getVarName()] = fit->second.returnVec;
+          }
+        }
+      }
     }
     VariableTypes[Node.getVarName()] = BindingType; // set the type of the variable
 

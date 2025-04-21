@@ -1,5 +1,5 @@
 (define (inc [x : Integer]) : Integer (+ x 1))
 (define (dec [x : Integer]) : Integer (- x 1))
-(define funcs : (Vector (Integer -> Integer) (Integer -> Integer))
-  (vector inc dec))
-((vector-ref funcs 0) 10)
+(define (makepair3 [a : (Integer -> Integer)] [b : (Integer -> Integer)]) : (Vector (Integer -> Integer) (Integer -> Integer))
+  (vector a b))
+((vector-ref (makepair3 inc dec) 0) 41)

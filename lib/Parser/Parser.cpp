@@ -82,9 +82,9 @@ FunctionDef* Parser::parseFunctionDef() {
 
     ParamType* pType = parseType();
     if (!pType) { 
-        skipUntil(tok::r_square);
-        if (Tok.is(tok::r_square)) advance();
-        continue;
+      skipUntil(tok::r_square);
+      if (Tok.is(tok::r_square)) advance();
+      continue;
     }
 
     if (!consume(TokenKind::r_square)) {
@@ -147,6 +147,7 @@ ParamType* Parser::parseType() {
     return new BasicParamType(ParamType::PK_Void, "Void");
   }
 
+  // composite in parens
   if (Tok.is(TokenKind::l_paren)) {
     advance();
 
@@ -157,7 +158,7 @@ ParamType* Parser::parseType() {
         ParamType* elemType = parseType();
         if (!elemType) {
           skipUntil(tok::r_paren);
-          if(Tok.is(tok::r_paren)) advance();
+          if (Tok.is(tok::r_paren)) advance();
           return nullptr;
         }
         elems.push_back(elemType);
@@ -167,41 +168,53 @@ ParamType* Parser::parseType() {
         return nullptr;
       }
       return new VectorParamType(elems);
+    }
 
-    } else {
-      std::vector<ParamType*> args;
-      while (!Tok.is(TokenKind::arrow) && !Tok.is(TokenKind::r_paren) && !Tok.is(TokenKind::eof)) {
-        ParamType* argType = parseType();
-        if (!argType) {
-          skipUntil(tok::r_paren);
-          if(Tok.is(tok::r_paren)) advance();
-          return nullptr;
-        }
-        args.push_back(argType);
-      }
-
-      if (!consume(TokenKind::arrow)) {
-        Diags.report(Tok.getLocation(), diag::err_unexpected_token, "Expected '->' in function type");
+    // function type or grouping
+    // collect one or more parameter types until '->' or ')'
+    std::vector<ParamType*> params;
+    while (!Tok.is(TokenKind::arrow)
+        && !Tok.is(TokenKind::r_paren)
+        && !Tok.is(TokenKind::eof)) {
+      ParamType* pt = parseType();
+      if (!pt) {
         skipUntil(tok::r_paren);
-        if(Tok.is(tok::r_paren)) advance();
+        if (Tok.is(tok::r_paren)) advance();
         return nullptr;
       }
+      params.push_back(pt);
+    }
 
-      ParamType* ret = parseType();
-      if (!ret) {
+    // function type if we see '->'
+    if (Tok.is(TokenKind::arrow)) {
+      advance();
+      ParamType* retTy = parseType();
+      if (!retTy) {
         skipUntil(tok::r_paren);
-        if(Tok.is(tok::r_paren)) advance();
+        if (Tok.is(tok::r_paren)) advance();
         return nullptr;
       }
-
       if (!consume(TokenKind::r_paren)) {
         Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
         return nullptr;
       }
-      return new FunctionParamType(args, ret);
+      return new FunctionParamType(params, retTy);
     }
+
+    // grouping: must have exactly one inner type
+    if (!consume(TokenKind::r_paren)) {
+      Diags.report(Tok.getLocation(), diag::err_no_rparen, Tok.getText());
+      return nullptr;
+    }
+    if (params.size() != 1) {
+      Diags.report(TypeStartLoc, diag::err_unexpected_token,
+                   "grouping must contain exactly one type");
+      return nullptr;
+    }
+    return params.front();
   }
 
+  // unknown
   Diags.report(TypeStartLoc, diag::err_unknown_param_type, Tok.getText());
   advance();
   return nullptr;
