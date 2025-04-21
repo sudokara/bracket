@@ -107,6 +107,11 @@ public:
         FunctionSignatures[FD->getName()] = {FT, FD->getReturnType()};
       }
 
+      for (auto &FP : functionPrototypes) {
+        FP.second->setLinkage(GlobalValue::InternalLinkage);
+        FP.second->setDoesNotThrow();
+      }
+
       for (FunctionDef *FD : P->getFunctionDefs()) {
         Function *F = functionPrototypes[FD->getName()];
         auto oldNameMap = nameMap;
@@ -161,6 +166,8 @@ public:
     FunctionType *MainFty = FunctionType::get(Int32Ty, {Int32Ty, PtrTy}, false);
     Function *MainFn =
         Function::Create(MainFty, GlobalValue::ExternalLinkage, "main", M);
+    MainFn->setCallingConv(CallingConv::C);
+    // MainFn->addFnAttr(Attribute::StackAlignment, 16);
     BasicBlock *BB = BasicBlock::Create(M->getContext(), "entry", MainFn); // first basic block, called entry
     Builder.SetInsertPoint(BB); // builder inserts everything that is called like CreateCall at this insertion point
     Tree->accept(*this);
@@ -845,8 +852,16 @@ public:
       V = Builder.CreateCall(FT, CastedFunc, argsV, "indirect_call");
       
       // Handle void returns
-      if (ReturnTy->isVoidTy())
-        V = Builder.CreateRetVoid();
+      if (ReturnTy->isVoidTy()) {
+          Builder.CreateRetVoid();
+          V = nullptr;
+      } else {
+          V = Builder.CreateCall(FT, CastedFunc, argsV, "indirect_call");
+      }
+
+      if (V && V->getType()->isVoidTy()) {
+        V = ConstantInt::get(Int32Ty, 0);  // Avoid dangling void value
+      }
     }
   }
 
