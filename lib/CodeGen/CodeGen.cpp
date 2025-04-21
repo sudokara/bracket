@@ -255,14 +255,11 @@ public:
         ReadFn = Function::Create(ReadFty, GlobalValue::ExternalLinkage, // return type, accessibility, name, module
                                   "read_value", M);
       }
-      // Value *IntTypeParam = ConstantInt::get(Int32Ty, 0, true);
-      // V = Builder.CreateCall(ReadFn, {IntTypeParam}); // calls read_value(0) for integer reading
       if (NodeType == ExprTypes::Bool) {
-        V = Builder.CreateCall(ReadFn, {ConstantInt::get(Int32Ty, 1, true)}); // calls read_value(1) for boolean reading
-        // convert int32 to bool
+        V = Builder.CreateCall(ReadFn, {ConstantInt::get(Int32Ty, 1, true)});
         V = Builder.CreateICmpNE(V, ConstantInt::get(Int32Ty, 0, true), "read_bool");
       } else {
-        V = Builder.CreateCall(ReadFn, {ConstantInt::get(Int32Ty, 0, true)}); // calls read_value(0) for integer reading
+        V = Builder.CreateCall(ReadFn, {ConstantInt::get(Int32Ty, 0, true)});
       }
       return;
     }
@@ -296,9 +293,6 @@ public:
       Value *E2 = V;
 
       if (Op == tok::eq) {
-        // V = Builder.CreateICmpEQ(E1, E2, "eq");
-        // return;
-
         Node.getE1()->accept(*this);
         Value *E1 = V;
         Node.getE2()->accept(*this);
@@ -307,14 +301,12 @@ public:
         ExprTypes E1Type = getExprType(Node.getE1());
         ExprTypes E2Type = getExprType(Node.getE2());
         
-        // Special case for vectors - compare pointers directly
+        // compare pointers directly for vectors
         if (E1Type == ExprTypes::Vector || E2Type == ExprTypes::Vector) {
-          // Convert pointers to integers for comparison
           Value *E1Int = Builder.CreatePtrToInt(E1, IntPtrTy, "ptr_to_int");
           Value *E2Int = Builder.CreatePtrToInt(E2, IntPtrTy, "ptr_to_int");
           V = Builder.CreateICmpEQ(E1Int, E2Int, "ptr_eq");
         } else {
-          // Regular eq? for non-vector types
           V = Builder.CreateICmpEQ(E1, E2, "eq");
         }
         return;
@@ -343,17 +335,14 @@ public:
     if (Op == tok::logical_not) {
       Node.getE1()->accept(*this);
     
-      // Get the semantic type of the expression
       ExprTypes E1Type = getExprType(Node.getE1());
       Value *OperandV = V;
       
-      // If it's semantically a boolean, ensure the LLVM type is i1
       if (E1Type == ExprTypes::Bool && !OperandV->getType()->isIntegerTy(1)) {
           OperandV = Builder.CreateICmpNE(OperandV, 
                                         ConstantInt::get(OperandV->getType(), 0), 
                                         "to_bool");
       }
-      // If it's not a boolean at LLVM level, force conversion
       else if (!OperandV->getType()->isIntegerTy(1)) {
           OperandV = Builder.CreateICmpNE(OperandV, 
                                         ConstantInt::get(OperandV->getType(), 0), 
@@ -364,7 +353,6 @@ public:
       return;
     }
 
-    // TODO: short circuiting
     if (Op == tok::logical_and) {
       Node.getE1()->accept(*this);
       Value *E1 = V;
@@ -374,7 +362,6 @@ public:
       return;
     }
 
-    // TODO: short circuiting
     if (Op == tok::logical_or) {
       Node.getE1()->accept(*this);
       Value *E1 = V;
@@ -398,15 +385,15 @@ public:
   virtual void visit(Var &Node) override {
     auto name = Node.getName();
     
-    // First check if it's a global function (directly by name)
+    // check if it's a global function (directly by name)
     auto funcIt = functionPrototypes.find(name);
     if (funcIt != functionPrototypes.end()) {
-        // It's a function reference, use the function directly
+        // function reference, use the function directly
         V = funcIt->second;
         return;
     }
     
-    // If not a global function, check local variables
+    // not a global function, check local variables
     auto it = nameMap.find(name);
     if (it == nameMap.end()) {
         llvm::errs() << "Error: Variable " << name << " is not defined\n";
@@ -416,25 +403,19 @@ public:
     Value *varPtr = it->second;
     ExprTypes T = getExprType(&Node);
     if (T == ExprTypes::Vector) {
-        // vector variables are already pointers to VectorTy on the stack
         V = varPtr;
         return;
     } else if (T == ExprTypes::Function) {
-        // Function variables (could be parameters or local bindings)
         if (auto *ArgVal = dyn_cast<Argument>(varPtr)) {
-            // It's a function parameter, use it directly
             V = ArgVal;
         } else if (auto *AllocaVal = dyn_cast<AllocaInst>(varPtr)) {
-            // It's a local variable, load the function pointer
             V = Builder.CreateLoad(PtrTy, AllocaVal, name + "_func");
         } else {
-            // Otherwise just use the value (might be a function pointer)
             V = varPtr;
         }
         return;
     }
 
-    // Regular variables (Int/Bool)
     if (T == ExprTypes::Bool) {
         V = Builder.CreateLoad(BoolTy, varPtr, name + "_val");
     } else {
@@ -445,13 +426,10 @@ public:
   virtual void visit(Let &Node) override { 
     StringRef varName = Node.getVarName();
 
-    // populate the binding expression first
-    // so that the variable can be assigned the value
     Node.getBinding()->accept(*this);
-    Value *bindingVal = V; // stored in V from the visit of the expression
+    Value *bindingVal = V;
     Type *bindingType = bindingVal->getType();
 
-    // checking if a binding exists and we have to backup for shadowing
     Value *oldBinding = nullptr;
     if (nameMap.find(varName) != nameMap.end()) {
       oldBinding = nameMap[varName];
@@ -459,38 +437,21 @@ public:
 
     ExprTypes bindingExprType = getExprType(Node.getBinding());
     
-    // assign this variable through an alloca
     if (bindingExprType == ExprTypes::Vector) {
       nameMap[varName] = bindingVal;
     } else {
       AllocaInst *variableAlloc = nullptr;
       if (bindingExprType == ExprTypes::Bool || bindingType->isIntegerTy(1)) {
-          // Always use BoolTy for boolean expressions
           variableAlloc = Builder.CreateAlloca(BoolTy, nullptr, varName);
-          
-          // If the binding value is not already a boolean, convert it
-          // if (!bindingType->isIntegerTy(1)) {
-          //     bindingVal = Builder.CreateICmpNE(bindingVal, 
-          //                                      ConstantInt::get(bindingType, 0), 
-          //                                      "to_bool");
-          // }
       } else {
           variableAlloc = Builder.CreateAlloca(Int32Ty, nullptr, varName);
-          
-          // If the binding value is a boolean, convert it to integer
-          // if (bindingType->isIntegerTy(1)) {
-          //     bindingVal = Builder.CreateZExt(bindingVal, Int32Ty, "bool_to_int");
-          // }
       }
       Builder.CreateStore(bindingVal, variableAlloc);
       nameMap[varName] = variableAlloc;
     }
 
-    // accept the body
     Node.getBody()->accept(*this);
 
-    // restore shadowed value if present
-    // else remove the variable since it is no longer in scope
     if (oldBinding) {
       nameMap[varName] = oldBinding;
     } else {
@@ -594,13 +555,11 @@ public:
       return;
     }
     
-    // evaluate each expression in sequence
     for (Expr *E : Exprs) {
       if (E) {
         E->accept(*this);
       }
     }
-    // the last expression already updated the value of V
   }
 
   virtual void visit(While &Node) override {
@@ -666,12 +625,6 @@ public:
         if (getExprType(E) == ExprTypes::Vector) {
             v = Builder.CreatePtrToInt(v, IntPtrTy, "vec2int");
         } else if (getExprType(E) == ExprTypes::Function) {
-            // Special handling for function elements in vectors
-            if (auto *VE = llvm::dyn_cast<Var>(E)) {
-                // Store function pointer as integer in the vector
-                // Function *F = functionPrototypes[VE->getName()];
-                // v = Builder.CreatePtrToInt(F, IntPtrTy, "func2int");
-            }
         } else {
             if (v->getType()->isIntegerTy(1) ||
                 v->getType()->isIntegerTy(32))
@@ -698,7 +651,7 @@ public:
     if (auto *VE = dyn_cast<Var>(Node.getVecExpr())) {
       auto it = nameMap.find(VE->getName());
       assert(it != nameMap.end() && "vector var not in map");
-      vecPtr = it->second;        // this is a Vector* alloca
+      vecPtr = it->second;
     }
     
     // gep to &vecPtr->length (field 0) and load the i32
@@ -707,23 +660,7 @@ public:
   }
 
   virtual void visit(VecRef &Node) override {
-    // Get the vector expression
     Node.getVecExpr()->accept(*this);
-    // Value *vecPtr = V;
-
-    // // load dataPtr
-    // Value *dataFld = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
-    // Value *dataPtr = Builder.CreateLoad(PointerType::getUnqual(IntPtrTy),
-    //                                     dataFld, "data_ptr");
-    // // compute index
-    // Node.getIndex()->accept(*this);
-    // Value *idx = V;
-    // if (!idx->getType()->isIntegerTy(IntPtrTy->getIntegerBitWidth()))
-    //   idx = Builder.CreateZExt(idx, IntPtrTy, "idx_ext");
-    // // element slot pointer
-    // Value *slot = Builder.CreateGEP(IntPtrTy, dataPtr, idx, "slot");
-    // // load raw IntPtrTy
-    // Value *raw = Builder.CreateLoad(IntPtrTy, slot, "raw_elem");
 
     Value *vecPtr;
     if (auto *VE = dyn_cast<Var>(Node.getVecExpr())) {
@@ -735,12 +672,11 @@ public:
       vecPtr = V;
     }
 
-    // 2) now do your GEP on a Vector* (vecPtr) safely
+    // gep on a vecPtr
     Value *dataAddr = Builder.CreateStructGEP(VectorTy, vecPtr, 1, "data_addr");
     Value *dataPtr  = Builder.CreateLoad(PointerType::getUnqual(IntPtrTy),
                                         dataAddr, "data_ptr");
 
-    // 3) compute the index slot etc...
     Node.getIndex()->accept(*this);
     Value *idx = V;
     if (!idx->getType()->isIntegerTy(IntPtrTy->getIntegerBitWidth()))
@@ -750,13 +686,11 @@ public:
     Value *raw  = Builder.CreateLoad(IntPtrTy, slot, "raw_elem");
 
 
-    // dispatch by semantic result type
     if (getExprType(&Node) == ExprTypes::Vector) {
       V = Builder.CreateIntToPtr(raw, VectorPtrTy, "int2vec");
     } else if (getExprType(&Node) == ExprTypes::Bool) {
       V = Builder.CreateTrunc(raw, BoolTy, "raw2bool");
     } else if (getExprType(&Node) == ExprTypes::Function) {
-      // For functions, keep the raw pointer value intact
       V = raw;
     } else {
       V = Builder.CreateTrunc(raw, Int32Ty, "raw2int");
@@ -769,7 +703,6 @@ public:
     
     Node.getIndex()->accept(*this);
     Value *idx = V;
-    // ensure index is i32
     if (!idx->getType()->isIntegerTy(32)) {
       idx = Builder.CreateZExt(idx, Int32Ty, "idx_to_i32");
     }
@@ -777,7 +710,6 @@ public:
     Node.getValue()->accept(*this);
     Value *valueToStore = V;
     
-    // convert boolean value to i32 if needed (since vectors store i32)
     if (valueToStore->getType()->isIntegerTy(1)) {
       valueToStore = Builder.CreateZExt(valueToStore, Int32Ty, "bool_to_i32");
     }
@@ -800,42 +732,35 @@ public:
   }
 
   virtual void visit(Apply &Node) override {
-    // Collect arguments first
     std::vector<Value*> argsV;
     for (Expr *E : Node.getArguments()) {
         E->accept(*this);
         argsV.push_back(V);
     }
 
-    // Get the function to call
     Node.getFunction()->accept(*this);
     Value *funcValue = V;
     
     if (auto *F = dyn_cast<Function>(funcValue)) {
-        // Direct function call - the function is already a Function* (from functionPrototypes)
+        // the function is already a Function* 
         V = Builder.CreateCall(F, argsV, "calltmp");
     } else {
-        // Indirect function call through a pointer (function parameter or from vector)
+        // through a pointer
         std::vector<Type*> argTypes(argsV.size(), Int32Ty);
         FunctionType *FT = FunctionType::get(Int32Ty, argTypes, false);
         
-        // Handle function pointer based on its type
         Value *funcPtr = funcValue;
         if (funcPtr->getType()->isPointerTy()) {
             Type *pointeeType = cast<PointerType>(funcPtr->getType());
             if (llvm::isa<FunctionType>(pointeeType)) {
-                // Already a function pointer, cast to expected type if needed
                 funcPtr = Builder.CreateBitCast(funcPtr, FT->getPointerTo(), "func_ptr_cast");
             } else {
-                // Not a function pointer, convert to function pointer
                 funcPtr = Builder.CreateIntToPtr(funcPtr, FT->getPointerTo(), "int2func");
             }
         } else {
-            // Integer/raw pointer representation, convert to function pointer
             funcPtr = Builder.CreateIntToPtr(funcPtr, FT->getPointerTo(), "int2func");
         }
         
-        // Call through the function pointer
         V = Builder.CreateCall(FT, funcPtr, argsV, "indirect_call");
     }
   }
@@ -860,7 +785,7 @@ public:
         A->setName(name);
         
         if (paramType->getKind() == ParamType::PK_Function) {
-            // Function arguments - store the function pointer directly
+            // store the function pointer directly
             nameMap[name] = A;
         } else if (A->getType() == VectorPtrTy) {
             // vector argument: keep it directly
@@ -879,12 +804,9 @@ public:
     
     ParamType *returnPT = Node.getReturnType();
     if (returnPT->getKind() == ParamType::PK_Function) {
-      // If the body was “neg” or some function var, we have a Function* in V:
       if (auto *FVar = llvm::dyn_cast<Function>(V)) {
-        // ptr → integer
         V = Builder.CreatePtrToInt(FVar, IntPtrTy, "func2int");
       } else {
-        // could be a function‐parameter or loaded pointer
         V = Builder.CreatePtrToInt(V, IntPtrTy, "func2int");
       }
     }

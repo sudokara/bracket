@@ -5,7 +5,7 @@
 namespace {
 struct FunctionInfo {
   std::vector<ExprTypes> paramTypes;
-  ExprTypes returnType;
+  ParamType* returnType;
   Vec* returnVec = nullptr;
 };
 class ProgramCheck : public ASTVisitor {
@@ -17,6 +17,8 @@ class ProgramCheck : public ASTVisitor {
   DenseMap <const VecRef*, Vec*> VecRefToVec;
   StringMap<FunctionInfo> FunctionTable;
   Program *RootProgram;
+  DenseMap<const Expr*, ParamType*> ExprParamTypes;
+  StringMap<ParamType*> VariableParamTypes;
 
   ExprTypes convertParamTypeToExprType(ParamType *T) {
     if (!T) return ExprTypes::Unknown;
@@ -130,8 +132,9 @@ public:
       std::vector<ExprTypes> paramTypes;
       for (auto &P : FD->getParams())
         paramTypes.push_back(convertParamTypeToExprType(P.second));
-      ExprTypes retTy = convertParamTypeToExprType(FD->getReturnType());
-      FunctionTable[FD->getName()] = {paramTypes, retTy};
+      // ExprTypes retTy = convertParamTypeToExprType(FD->getReturnType());
+      // FunctionTable[FD->getName()] = {paramTypes, retTy};
+      FunctionTable[FD->getName()] = {paramTypes, FD->getReturnType(), nullptr};
     }
 
     for (FunctionDef *Def : Node.getFunctionDefs()) {
@@ -556,6 +559,11 @@ public:
             Vectors[Node.getVarName()] = fit->second.returnVec;
           }
         }
+      }
+    } else if (BindingType == ExprTypes::Function) {
+      auto it = ExprParamTypes.find(Node.getBinding());
+      if (it != ExprParamTypes.end()) {
+        VariableParamTypes[Node.getVarName()] = it->second;
       }
     }
     VariableTypes[Node.getVarName()] = BindingType; // set the type of the variable
@@ -1068,7 +1076,7 @@ public:
     ExprTypes returnType = convertParamTypeToExprType(Node.getReturnType());
 
     // stash a stub in the table (returnVec defaults to nullptr)
-    FunctionTable[Node.getName()] = { paramTypes, returnType, nullptr };
+    FunctionTable[Node.getName()] = { paramTypes, Node.getReturnType() };
 
     // if this function literally returns a Vec AST, record it
     if (returnType == ExprTypes::Vector) {
@@ -1105,7 +1113,8 @@ public:
     Node.getFunction()->accept(*this);
     ExprTypes funcType = getExprType(Node.getFunction());
     if (funcType != ExprTypes::Function) {
-      llvm::errs() << "Error: Applying non-function type " << getTypeString(funcType) << "\n";
+      llvm::errs() << "Error: Applying non-function type " 
+                    << getTypeString(funcType) << "\n";
       HasError = true;
       setExprType(&Node, ExprTypes::Unknown);
       return;
@@ -1120,7 +1129,7 @@ public:
 
           if (Node.getArguments().size() != expected.size()) {
             llvm::errs() << "Error: Argument count mismatch in function variable "
-                         << funcVar->getName() << "\n";
+                          << funcVar->getName() << "\n";
             HasError = true;
             setExprType(&Node, ExprTypes::Unknown);
             return;
@@ -1143,6 +1152,7 @@ public:
       }
     }
 
+    // existing function directly used
     if (Var *funcVar = llvm::dyn_cast<Var>(Node.getFunction())) {
       StringRef funcName = funcVar->getName();
       auto it = FunctionTable.find(funcName);
@@ -1150,28 +1160,67 @@ public:
         const FunctionInfo &info = it->second;
         const std::vector<Expr*> &args = Node.getArguments();
         if (args.size() != info.paramTypes.size()) {
-          llvm::errs() << "Error: Function " << funcName << " argument count mismatch\n";
+          llvm::errs() << "Error: Function " << funcName 
+                        << " argument count mismatch\n";
           HasError = true;
           setExprType(&Node, ExprTypes::Unknown);
           return;
         }
-
+        
         for (size_t i = 0; i < args.size(); ++i) {
           args[i]->accept(*this);
           ExprTypes argType = getExprType(args[i]);
           if (argType != info.paramTypes[i]) {
-            llvm::errs() << "Error: Argument " << (i+1) << " type mismatch in function " << funcName << "\n";
+            llvm::errs() << "Error: Argument " << (i+1) 
+                          << " type mismatch in function " << funcName << "\n";
             HasError = true;
           }
         }
 
-        setExprType(&Node, info.returnType);
+        llvm::errs() << info.returnType->getKind() << "\n";
+        if (info.returnType->getKind() == ParamType::PK_Function) {
+          
+        }
+        setExprType(&Node, convertParamTypeToExprType(info.returnType));
+        ExprParamTypes[&Node] = info.returnType;
         return;
       }
     }
 
-    setExprType(&Node, ExprTypes::Unknown);
-  }
+    // function passed as parameter
+    if (Var *funcVar = llvm::dyn_cast<Var>(Node.getFunction())) {
+      StringRef varName = funcVar->getName();
+      auto paramIt = VariableParamTypes.find(varName);
+      if (paramIt != VariableParamTypes.end()) {
+        ParamType* funcType = paramIt->second;
+        if (funcType->getKind() == ParamType::PK_Function) {
+          FunctionParamType* fpt = llvm::cast<FunctionParamType>(funcType);
+          
+          if (Node.getArguments().size() != fpt->getParamTypes().size()) {
+            llvm::errs() << "Argument count mismatch\n";
+            HasError = true;
+            setExprType(&Node, ExprTypes::Unknown);
+            return;
+          }
+
+          for (size_t i = 0; i < fpt->getParamTypes().size(); ++i) {
+            Node.getArguments()[i]->accept(*this);
+            ExprTypes argType = getExprType(Node.getArguments()[i]);
+            ExprTypes expected = convertParamTypeToExprType(fpt->getParamTypes()[i]);
+            if (argType != expected) {
+              raiseTypeError(Node.getArguments()[i], expected, argType);
+            }
+          }
+
+          setExprType(&Node, convertParamTypeToExprType(fpt->getReturnType()));
+          return;
+        }
+      }
+    }
+
+  setExprType(&Node, ExprTypes::Unknown);
+}
+
 
 };
 } // namespace
