@@ -167,7 +167,6 @@ public:
     Function *MainFn =
         Function::Create(MainFty, GlobalValue::ExternalLinkage, "main", M);
     MainFn->setCallingConv(CallingConv::C);
-    // MainFn->addFnAttr(Attribute::StackAlignment, 16);
     BasicBlock *BB = BasicBlock::Create(M->getContext(), "entry", MainFn); // first basic block, called entry
     Builder.SetInsertPoint(BB); // builder inserts everything that is called like CreateCall at this insertion point
     Tree->accept(*this);
