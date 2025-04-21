@@ -30,6 +30,39 @@ class ProgramCheck : public ASTVisitor {
     }
   }
 
+  bool recursiveCompareTypes(Expr *Expr1, Expr *Expr2) {
+    ExprTypes E1Type = getExprType(Expr1), E2Type = getExprType(Expr2);
+
+    if (E1Type == ExprTypes::Unknown || E2Type == ExprTypes::Unknown) {
+      llvm::errs() << "Error: Cannot determine type for read expression\n";
+      HasError = true;
+      return false;
+    }
+    if (E1Type != E2Type) {
+      raiseTypeError(Expr1, E1Type, E2Type);
+      return false;
+    }
+    if (E1Type == ExprTypes::Vector) {
+      auto *Vec1 = llvm::dyn_cast<Vec>(Expr1);
+      auto *Vec2 = llvm::dyn_cast<Vec>(Expr2);
+      if (Vec1 && Vec2) {
+        if (Vec1->getLength() != Vec2->getLength()) {
+          llvm::errs() << "Error: Vector lengths do not match\n";
+          HasError = true;
+          return false;
+        }
+        const std::vector<Expr*> &Elements1 = Vec1->getElements();
+        const std::vector<Expr*> &Elements2 = Vec2->getElements();
+        for (size_t i = 0; i < Vec1->getLength(); ++i) {
+          if (!recursiveCompareTypes(Elements1[i], Elements2[i])) {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
 public:
   ProgramCheck() : HasError(false), RootProgram(nullptr) {}
 
@@ -353,6 +386,13 @@ public:
         return;
       }
 
+      if (!recursiveCompareTypes(Node.getE1(), Node.getE2())) {
+        llvm::errs() << "Error: Expressions are of different types!\n";
+        HasError = true;
+        setExprType(&Node, ExprTypes::Unknown);
+        return;
+      }
+
       // vector equality is also handled here
       if (E1Type != E2Type) {
         raiseTypeError(&Node, E1Type, E2Type);
@@ -611,6 +651,13 @@ public:
       setExprType(&Node, ExprTypes::Unknown);
       return;
     }
+
+    if (!recursiveCompareTypes(Node.getThenExpr(), Node.getElseExpr())) {
+      llvm::errs() << "Error: Then and else branches are of different types!\n";
+      HasError = true;
+      setExprType(&Node, ExprTypes::Unknown);
+      return;
+    }
     
     setExprType(&Node, ThenType); // set the type of the if expression to the type of the then expression
   }
@@ -646,6 +693,16 @@ public:
         raiseTypeError(&Node, VarType, ValueType);
         setExprType(&Node, ExprTypes::Unknown);
         return;
+      }
+      if (ValueType == ExprTypes::Vector && VarType == ExprTypes::Vector) {
+        Vec *oldValue = Vectors[Node.getVarName()];
+        Vec *newValue = llvm::dyn_cast<Vec>(Node.getValue());
+        if (!recursiveCompareTypes(oldValue, newValue)) {
+          llvm::errs() << "Error: Vector types do not match\n";
+          HasError = true;
+          setExprType(&Node, ExprTypes::Unknown);
+          return;
+        }
       }
     }
     
