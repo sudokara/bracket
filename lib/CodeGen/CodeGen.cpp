@@ -4,6 +4,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Casting.h"
 
 using namespace llvm;
 
@@ -49,7 +50,8 @@ public:
 
   // something was exlpained here. you should see. 
   void run(AST *Tree) {
-    if (auto* P = dynamic_cast<Program*>(Tree)) {
+    // if (auto* P = dynamic_cast<Program*>(Tree)) {
+    if (auto* P = dyn_cast<Program>(Tree)) {
       RootProgram = P;
       TypeInfo = P->getInfo();
     }
@@ -75,7 +77,8 @@ public:
     //       WriteIntFnTy, GlobalValue::ExternalLinkage, "write_int", M);
     //   Builder.CreateCall(WriteIntFn, {V}); // Remove WriteIntFnTy
     // }
-    ExprTypes resultType = getExprType(dynamic_cast<Program*>(Tree)->getExpr());
+    // ExprTypes resultType = getExprType(dynamic_cast<Program*>(Tree)->getExpr());
+    ExprTypes resultType = getExprType(dyn_cast<Program>(Tree)->getExpr());
 
     if (resultType == ExprTypes::Void) {
     } 
