@@ -63,8 +63,13 @@ public:
 
 class AST {
 public:
+  enum Kind {K_Program, K_Expr, K_Prim, K_Int, K_Var, K_Let, K_Bool, K_If, K_Set, K_Begin,
+             K_While, K_Void, K_Vec, K_VecRef, K_VecLen, K_VecSet, K_FunctionDef,
+             K_Apply};
+  Kind K;
   virtual ~AST() {}
   virtual void accept(ASTVisitor &V) = 0;
+  Kind getKind() const { return K; }
 };
 
 class ParamType {
@@ -93,6 +98,7 @@ class Program : public AST {
   std::vector<FunctionDef *> Defs;
   Expr *E;
   ProgramInfo Info;
+  Kind K = K_Program;
 
 public:
   Program(Expr *E) : E(E) {};
@@ -105,8 +111,11 @@ public:
   const std::vector<FunctionDef*>& getFunctionDefs() const { return Defs; }
   ProgramInfo getInfo() const { return Info; };
   void setInfo(ProgramInfo Info) { this->Info = Info; };
+  Kind getKind() const { return K; }
 
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const AST *A) { return A->getKind() == K_Program; }
 };
 
 class Expr : public AST {
@@ -122,6 +131,8 @@ public:
 
   ExprKind getKind() const { return Kind; }
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const AST *A) { return A->getKind() == K_Expr; }
 };
 
 class Prim : public Expr {
@@ -387,6 +398,8 @@ public:
   Expr* getBody() const { return Body; }
 
   virtual void accept(ASTVisitor &V) override { V.visit(*this); }
+
+  static bool classof(const AST *A) { return A->getKind() == K_FunctionDef; }
 };
 
 class Apply : public Expr {
