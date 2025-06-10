@@ -208,7 +208,6 @@ Use the included `make_build.sh` script, replacing these exports or build it you
 
 ```sh
 mkdir build
-mkdir build
 cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug \
 -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang \
 -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ \
