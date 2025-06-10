@@ -112,6 +112,26 @@ and
 ```
 throw an error because the condition being evaluated (`e1`) must return a boolean, and both branches (`e2` and `e3` must be of the same type).
 
+### Imperative Features and Sequencing
+The language includes several forms for managing state and control flow.
+
+*   **The `Void` Type**: The `Void` type and the literal `(void)` expression represent the absence of a useful value. They are used for expressions that are evaluated purely for their side effects, such as `set!` and `while`.
+
+*   **`set!`**: The `(set! var exp)` expression mutates (changes) the value of a previously defined variable. The `set!` expression itself evaluates to `void`. The type checker requires that the type of `exp` must match the existing type of `var`.
+
+*   **`begin`**: The `(begin exp1 exp2 ...)` expression allows for sequencing. It evaluates each of its sub-expressions in order, from left to right. The result of the entire `begin` block is the result of its final sub-expression.
+
+*   **`while`**: The `(while cond-exp body-exp)` expression provides a looping construct. It repeatedly evaluates `cond-exp`. If the result is `#t`, it executes `body-exp` and then repeats the process. The loop terminates when `cond-exp` evaluates to `#f`. The result of a `while` loop is always `void`, and the type checker requires that `cond-exp` must be of type `Boolean`.
+
+This example uses all four features to loop five times and return the final value of the counter as `5`.
+
+    (let ([i 0])
+      (begin
+        (while (< i 5)
+          (set! i (+ i 1)))
+        i))
+
+
 ### Vectors (Tuples) and Aliasing
 The language supports vectors, which are used as fixed-size, heterogeneous tuples.
 
